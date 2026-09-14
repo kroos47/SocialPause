@@ -18,9 +18,6 @@ See [UI implementation and verification](docs/UI_UPDATE.md).
 
 1. [Android Studio setup and build](docs/ANDROID_STUDIO.md)
 2. [What each file does](docs/FILE_GUIDE.md)
-3. [Using Codex as a beginner](docs/CODEX_GUIDE.md)
-4. [Phone acceptance tests](docs/DEVICE_TESTS.md)
-5. [Actual validation results](docs/VALIDATION.md)
 
 Open this folder in Android Studio, not its parent and not `app/`:
 
