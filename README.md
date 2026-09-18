@@ -1,4 +1,4 @@
-# SocialPause 0.4.0
+# SocialPause 0.4.2
 
 Personal, offline Android app for the Galaxy S24 Ultra / Android 16. Instagram gets **7 focused minutes**, and other selected apps get **10 focused minutes each**. Exhausting an allowance immediately starts that app's **60-minute cooldown**. There is no shared 20-minute limit.
 
@@ -37,3 +37,5 @@ Today Insights shows per-app usage only. This week shows stacked daily bars with
 The dependency-free engine suite runs through Gradle `:engine:checkRules` or `scripts/test-engine.sh`. It includes independent timer, schedule, history and notification-presentation scenarios, a real v0.2 serialization fixture, and 5,000 randomized transitions compared with an independent model.
 
 Normal Android apps are bypassable through force-stop, uninstall or disabling Accessibility. Accessibility can redirect Home, not force-stop another process or stop background audio. Samsung battery behavior, live notifications and multi-window require phone acceptance. No INTERNET permission, account, analytics or external service is used.
+
+0.4.2 removes the temporary Status-bar countdown diagnostic from Settings and its unused sampling code. The working notification countdown and compatibility handling remain. On the user's Galaxy S24 Ultra, enabling **Phone Settings → Developer options → Live notifications for all apps** made the status-bar countdown work. Keep that phone setting enabled. This update preserves existing timers and history.

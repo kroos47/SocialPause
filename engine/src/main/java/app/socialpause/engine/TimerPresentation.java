@@ -32,6 +32,12 @@ public final class TimerPresentation {
                 next, next == null ? 0 : e.cooldownRemaining(next, wall, elapsed), RulesEngine.COOLDOWN, rows);
     }
     public boolean activeChip() { return kind == Kind.APP; }
+    /** Explicit, compact chip content; independent of locale and notification chrono fallback. */
+    public String shortCriticalText() {
+        if (!activeChip() || remaining <= 0) return "";
+        long seconds = (remaining + 999) / 1000;
+        return String.format(Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
+    }
     public boolean ticking() { return kind != Kind.HIDDEN && remaining > 0; }
     public int progress() { return (int) Math.max(0, Math.min(100, (limit - remaining) * 100 / limit)); }
 }

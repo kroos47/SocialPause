@@ -49,7 +49,7 @@ final class TimerNotifications {
         Design d=new Design(context);
         String title,body;boolean overview=p.kind==TimerPresentation.Kind.OVERVIEW||p.kind==TimerPresentation.Kind.ALL_COOLDOWN||p.kind==TimerPresentation.Kind.LUNCH_COOLDOWN;
         switch(p.kind) {
-            case APP -> {title=AppController.label(context,p.app);body="Usage remaining · "+e.limit(p.app)/RulesEngine.MINUTE+" min allowance";}
+            case APP -> {title=AppController.label(context,p.app);body=p.shortCriticalText()+" usage left · "+e.limit(p.app)/RulesEngine.MINUTE+" min allowance";}
             case LUNCH -> {title="Lunch break · unrestricted";body="Cooldown starts at "+AppController.at(wall+p.remaining)+" · Fresh allowances at "+AppController.at(wall+p.remaining+RulesEngine.COOLDOWN);}
             case LUNCH_COOLDOWN -> {title="After lunch · all apps resting";body="Each app is available again at "+AppController.at(wall+p.remaining);}
             default -> {
@@ -87,14 +87,21 @@ final class TimerNotifications {
             if(p.activeChip())b.setProgress(100,p.progress(),false);
         }
         if(p.activeChip()) {
-            // A system chronometer keeps the chip moving between notification updates.
+            // Explicit chip text takes precedence over the automatic chronometer fallback.
             b.setWhen(wall+p.remaining).setShowWhen(true).setUsesChronometer(true).setChronometerCountDown(true);
-            if(Build.VERSION.SDK_INT>=36)b.setShortCriticalText(null);
+            if(Build.VERSION.SDK_INT>=36)b.setShortCriticalText(p.shortCriticalText());
             if(!ordinary){Bundle extras=new Bundle();extras.putBoolean("android.requestPromotedOngoing",true);b.addExtras(extras);}
         } else {
             b.setWhen(0).setShowWhen(false).setUsesChronometer(false);
             if(Build.VERSION.SDK_INT>=36)b.setShortCriticalText("");
         }
-        manager.notify(10,b.build());
+        Notification notification=b.build();
+        if(p.activeChip() && !ordinary && Build.VERSION.SDK_INT>=36 && !notification.hasPromotableCharacteristics()) {
+            // Initial Android 16 requires colorization; later releases require the opposite.
+            // Ask this OS which public-API format it accepts, preserving the modern default.
+            Notification legacy=Notification.Builder.recoverBuilder(context,notification.clone()).setColorized(true).build();
+            if(legacy.hasPromotableCharacteristics())notification=legacy;
+        }
+        manager.notify(10,notification);
     }
 }

@@ -160,6 +160,17 @@ public final class EngineTests {
             c.focus(f.resolve(true,true,List.of(window("com.android.systemui",FocusResolver.Kind.SYSTEM_PANEL,0)),"com.android.systemui",false));c.minutes(2);eq(5*MINUTE,c.e.used(X));
             eq("com.android.settings",f.resolve(true,true,List.of(window(null,FocusResolver.Kind.APP,0)),"com.android.settings",false));
         });
+        test("active chip text counts down at second boundaries",()->{
+            Clock c=new Clock();c.focus(X);eq("10:00",c.notification().shortCriticalText());c.millis(500);eq("10:00",c.notification().shortCriticalText());c.millis(500);eq("09:59",c.notification().shortCriticalText());c.millis(209000);eq("06:30",c.notification().shortCriticalText());
+            c.millis(389000);eq("00:01",c.notification().shortCriticalText());c.millis(1000);eq("",c.notification().shortCriticalText());eq(COOLDOWN,c.cooldown(X));
+        });
+        test("chip text follows selected app and clears when paused",()->{
+            Clock c=new Clock();c.focus(I);eq("07:00",c.notification().shortCriticalText());c.minutes(2);eq("05:00",c.notification().shortCriticalText());c.focus(X);eq("10:00",c.notification().shortCriticalText());c.minutes(1);c.focus(null);eq("",c.notification().shortCriticalText());c.focus(I);eq("05:00",c.notification().shortCriticalText());
+            c.e.focus(I,false,c.wall,c.elapsed);eq("",c.notification().shortCriticalText());c.focus(I);c.e.stop(c.wall,c.elapsed);eq("",c.notification().shortCriticalText());
+        });
+        test("chip text stays compact across locales and schedule modes",()->{
+            Locale saved=Locale.getDefault();try{Locale.setDefault(Locale.forLanguageTag("ar"));Clock c=new Clock();c.focus(I);eq("07:00",c.notification().shortCriticalText());c.e.sleep(true,0,1439);eq("",c.notification().shortCriticalText());c.e.sleepEnabled=false;c.lunch();c.minutes(240);eq("",c.notification().shortCriticalText());c.minutes(60);eq("",c.notification().shortCriticalText());}finally{Locale.setDefault(saved);}
+        });
         System.out.println(tests+" scenarios passed.");
     }
 }
