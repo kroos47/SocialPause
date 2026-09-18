@@ -1,11 +1,50 @@
+# Local toolchains, caches, IDE settings and SDK paths
 /.tools/
-/.gradle/
-/local.properties
-**/build/
-/.idea/
+.gradle/
+.idea/
+local.properties
 *.iml
+
+# Generated binaries, captures and logs
+**/build/
+**/bin/
+*.class
+*.apk
+*.aab
+*.apks
+*.hprof
+*.heapdump
+*.log
+captures/
+/artifacts/
+.DS_Store
+
+# Private signing material and local credentials
 *.jks
 *.keystore
-/artifacts/
-/docs/
-*.DS_Store
+*.p12
+*.pfx
+*.pem
+*.key
+id_rsa
+id_ed25519
+.env
+.env.*
+*.env
+keystore.properties
+key.properties
+signing.properties
+secrets.properties
+credentials.json
+service-account*.json
+*-service-account.json
+
+# Only reviewed project guides are candidates for publication.
+/docs/*
+!/docs/ANDROID_STUDIO.md
+!/docs/CODEX_GUIDE.md
+!/docs/DEVICE_TESTS.md
+!/docs/FILE_GUIDE.md
+!/docs/UI_UPDATE.md
+!/docs/VALIDATION.md
+!/docs/PUBLISHING.md

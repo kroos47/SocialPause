@@ -4,7 +4,7 @@ Personal, offline Android app for the Galaxy S24 Ultra / Android 16. Instagram g
 
 ## Build and install
 
-Open `/Users/kroos/KROOS/codex/SocialPauseBuild` in Android Studio, not a copy extracted inside `artifacts`. Follow [Android Studio setup](docs/ANDROID_STUDIO.md), then run `sh scripts/verify.sh`. The build uses Java 17 source, JDK 21, Gradle 8.13, AGP 8.13.0 and SDK 36. No Kotlin or Compose plugin is required.
+Open the repository root (the folder containing `settings.gradle.kts`) in Android Studio. Follow [Android Studio setup](docs/ANDROID_STUDIO.md), then run `sh scripts/verify.sh`. The build uses Java 17 source, JDK 21, Gradle 8.13, AGP 8.13.0 and SDK 36. No Kotlin or Compose plugin is required.
 
 The raw debug APK is `app/build/outputs/apk/debug/app-debug.apk`; the delivered copy is `artifacts/SocialPause.apk`. Publishing is unnecessary. Preserve the signing key to install updates without uninstalling and losing data.
 
@@ -33,6 +33,7 @@ Today Insights shows per-app usage only. This week shows stacked daily bars with
 - [Validation](docs/VALIDATION.md): checks actually performed and device limits.
 - [Samsung test checklist](docs/DEVICE_TESTS.md): physical-phone acceptance.
 - [Codex guide](docs/CODEX_GUIDE.md): how to ask for changes and review agent work.
+- [Publishing safely](docs/PUBLISHING.md): files to commit, local-only files, and secret checks.
 
 The dependency-free engine suite runs through Gradle `:engine:checkRules` or `scripts/test-engine.sh`. It includes independent timer, schedule, history and notification-presentation scenarios, a real v0.2 serialization fixture, and 5,000 randomized transitions compared with an independent model.
 

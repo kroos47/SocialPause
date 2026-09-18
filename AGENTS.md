@@ -25,7 +25,7 @@
 
 ## Verification
 - Read `docs/ANDROID_STUDIO.md` before changing build configuration.
-- Use a complete JDK 21 or 17, including jlink, for Gradle 8.13. The installed Android Studio JDK 25 is not the project JDK.
+- Use a complete JDK 21 or 17, including jlink, for Gradle 8.13.
 - `sh scripts/verify.sh` runs timing tests, debug APK assembly, and Android lint.
 - `:engine:checkRules` is a dependency-free scenario runner; an empty JUnit report does not replace it.
 - For timing changes, add meaningful fake-clock scenarios for independent deadlines, delayed callbacks, lunch, process recovery, and migration. Keep the real v0.2 serialized fixture and randomized reference-model coverage.
@@ -39,3 +39,9 @@
 - V2 local exports are the visual reference: mint Home summary, app glyph badges, timer/state cards, compact Insights, app-colored weekly stacks, and light/dark tokens. Use real engine data, never reference sample numbers.
 - Local design documents are reference material; explicit user behavior changes take precedence.
 - FocusResolver owns the testable distinction between system panels and real app switches; read package/window metadata only, never screen text.
+
+## GitHub publishing hygiene
+- Keep signing keys, credentials, local SDK paths, real usage data, screenshots/logs, caches and generated artifacts out of Git. `.gitignore` explicitly lists the reviewed guides allowed under docs/. Review new guides before allowing them.
+- Keep the Gradle wrapper JAR and synthetic `legacy-v02.bin` test fixture. Generated `engine/bin` class files are local output, not source.
+- Use portable paths in committed documentation. Check both the current files and reachable history when auditing secrets; ignore rules do not remove prior commits.
+- Never rewrite published history or change Git author identity without a specific user request. Do not commit, push or force-add ignored files as part of a local audit.
