@@ -2,11 +2,12 @@ package app.socialpause;
 
 import android.content.*;
 
-/** Dismissing the notification affects visibility only, never enforcement. */
+/** Restore only our ordinary timer surface; never re-promote a dismissed live update in this run. */
 public final class NotificationDismissReceiver extends BroadcastReceiver {
     static final String ACTION="app.socialpause.NOTIFICATION_DISMISSED";
     @Override public void onReceive(Context c,Intent intent) {
-        if(ACTION.equals(intent.getAction()))c.getSharedPreferences("notification-visibility",Context.MODE_PRIVATE).edit().putLong("dismissed-cycle",intent.getLongExtra("cycle",-1)).apply();
+        if(!ACTION.equals(intent.getAction()))return;
+        AppController controller=AppController.get(c);
+        if(intent.getLongExtra("run",-1)==controller.engine.cycleId())controller.notificationDismissed();
     }
-    static boolean dismissed(Context c,long cycle) {return c.getSharedPreferences("notification-visibility",Context.MODE_PRIVATE).getLong("dismissed-cycle",-1)==cycle;}
 }

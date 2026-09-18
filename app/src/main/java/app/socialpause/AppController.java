@@ -22,7 +22,8 @@ public final class AppController {
     public static long elapsed() { return SystemClock.elapsedRealtime(); }
     public void refresh() { engine.advance(wall(), elapsed()); publish(); }
     public void focus(String pkg, boolean unlocked) { engine.focus(pkg, unlocked, wall(), elapsed()); publish(); }
-    public void start() { engine.start(wall(), elapsed()); publish(); }
+    public void notificationDismissed() { notifications.dismissed(engine.cycleId()); refresh(); }
+    public void start() { notifications.newRun(); engine.start(wall(), elapsed()); publish(); }
     public void stop() { engine.stop(wall(), elapsed()); publish(); }
     private void publish() {
         store.save(engine); notifications.update(engine, connected);
@@ -32,6 +33,7 @@ public final class AppController {
         long seconds = (Math.max(0, ms) + 999) / 1000;
         return String.format(Locale.getDefault(), "%02d:%02d", seconds / 60, seconds % 60);
     }
+    public static String at(long wall) { return java.time.Instant.ofEpochMilli(wall).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("h:mm a")); }
     public static String time(int minute) { return String.format(Locale.getDefault(), "%02d:%02d", minute / 60, minute % 60); }
     public static String label(Context c, String pkg) {
         try { return c.getPackageManager().getApplicationLabel(c.getPackageManager().getApplicationInfo(pkg, 0)).toString(); }

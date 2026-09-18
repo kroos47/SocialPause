@@ -24,6 +24,19 @@ public final class MainActivity extends Activity {
     private ScrollView scroll;
     private int tab;
     private boolean week = true;
+    private LocalDate selectedDay;
+    private Design.Chart weeklyChart;
+    private LocalDate touchSelection;
+    private float touchX,touchY;
+    private boolean moved;
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        if(event.getActionMasked()==MotionEvent.ACTION_DOWN){touchSelection=selectedDay;touchX=event.getRawX();touchY=event.getRawY();moved=false;}
+        if(event.getActionMasked()==MotionEvent.ACTION_MOVE && Math.hypot(event.getRawX()-touchX,event.getRawY()-touchY)>ViewConfiguration.get(this).getScaledTouchSlop())moved=true;
+        boolean clear=event.getActionMasked()==MotionEvent.ACTION_UP&&!moved&&touchSelection!=null&&weeklyChart!=null&&!weeklyChart.containsDay(event.getRawX(),event.getRawY());
+        boolean handled=super.dispatchTouchEvent(event);
+        if(clear&&tab==1&&week&&touchSelection.equals(selectedDay)){selectedDay=null;structure="";render();}
+        return handled;
+    }
     private String structure = "";
     private final List<Runnable> bindings = new ArrayList<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -33,7 +46,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle saved) {
         setTheme(R.style.Theme_SocialPause);
         super.onCreate(saved); controller = AppController.get(this); d = new Design(this);
-        if (saved != null) { tab = saved.getInt("tab"); week = saved.getBoolean("week", true); }
+        if (saved != null) { tab = saved.getInt("tab"); week = saved.getBoolean("week", true); String day = saved.getString("selectedDay"); if (day != null) selectedDay = LocalDate.parse(day); }
         root = d.column(); root.setBackgroundColor(d.background);
         scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setClipToPadding(false);
         content = d.column(); content.setPadding(d.dp(24),d.dp(24),d.dp(24),d.dp(28)); scroll.addView(content);
@@ -48,19 +61,21 @@ public final class MainActivity extends Activity {
                 WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
         controller.refresh(); render();
     }
-    @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); state.putInt("tab",tab); state.putBoolean("week",week); }
+    @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); state.putInt("tab",tab); state.putBoolean("week",week); if(selectedDay!=null)state.putString("selectedDay",selectedDay.toString()); }
     private RulesEngine e() { return controller.engine; }
     private RulesEngine.Mode mode() { return e().mode(AppController.wall(),AppController.elapsed()); }
     private TextView text(String value,int size,int color,boolean bold) { return d.text(value,size,color,bold); }
     private void line(String value,int size,int color,boolean bold,int top) { d.add(content,text(value,size,color,bold),top); }
     private void bind(Runnable runnable) { bindings.add(runnable); runnable.run(); }
     private void render() {
-        String key = tab+":"+week+":"+mode()+":"+controller.connected+":"+e().selected+":"+e().pendingAt()+":"+e().quiet(AppController.wall())+":"+e().lunchEnabled+":"+e().lunchMinute+":"+e().sleepEnabled+":"+e().sleepStart+":"+e().sleepEnd+":"+LocalDate.now();
+        LocalDate monday=LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        if(selectedDay!=null && (selectedDay.isBefore(monday)||selectedDay.isAfter(monday.plusDays(6))))selectedDay=null;
+        String key = tab+":"+week+":"+selectedDay+":"+mode()+":"+controller.connected+":"+e().selected+":"+e().pendingAt()+":"+e().quiet(AppController.wall())+":"+e().lunchEnabled+":"+e().lunchMinute+":"+e().sleepEnabled+":"+e().sleepStart+":"+e().sleepEnd+":"+LocalDate.now();
         if (!key.equals(structure)) { structure=key; buildPage(); }
         for(Runnable binding:bindings)binding.run();
     }
     private void buildPage() {
-        int y=scroll.getScrollY(); bindings.clear(); content.removeAllViews(); navigation.removeAllViews(); navigation.setBackgroundColor(d.surface);
+        int y=scroll.getScrollY(); bindings.clear(); weeklyChart=null; content.removeAllViews(); navigation.removeAllViews(); navigation.setBackgroundColor(d.surface);
         String[] titles={"Home","Insights","Settings"}, icons={"home","chart","settings"};
         for(int i=0;i<3;i++) {
             final int page=i; LinearLayout item=d.column(); item.setGravity(Gravity.CENTER); item.setMinimumHeight(d.dp(58));
@@ -74,7 +89,7 @@ public final class MainActivity extends Activity {
         if(tab==0)home();else if(tab==1)insights();else settings();
         scroll.post(()->scroll.scrollTo(0,y));
     }
-    private void heading(String title,String subtitle) { line(title,28,d.ink,true,0);line(subtitle,15,d.muted,false,10); }
+    private void heading(String title,String subtitle) { line(title,28,d.ink,true,0);line(subtitle,14,d.muted,false,10); }
     private void banner(String icon,String title,String subtitle,int top,Runnable action) {
         LinearLayout card=d.card(d.mint,16), row=d.row(), words=d.column();
         row.addView(d.icon(icon,d.ink),new LinearLayout.LayoutParams(d.dp(22),d.dp(22)));
@@ -83,95 +98,101 @@ public final class MainActivity extends Activity {
         d.add(content,card,24);
     }
     private void home() {
-        if(mode()==RulesEngine.Mode.COOLDOWN){cooldown();return;}
         LinearLayout title=d.row();d.weighted(title,text("SocialPause",28,d.ink,true));
         Button toggle=d.button(e().running?"Stop":"Start",false,()->{if(e().running)controller.stop();else controller.start();render();});
-        toggle.setEnabled(e().running || controller.connected);toggle.setAlpha(toggle.isEnabled()?1f:.5f);title.addView(toggle);content.addView(title);
-        line("A little social. A little more life.",15,d.muted,false,8);
-        LinearLayout hero=d.card(d.accent,20),row=d.row(),words=d.column();
-        String label=mode()==RulesEngine.Mode.LUNCH?"LUNCH BREAK":mode()==RulesEngine.Mode.STOPPED?"TRACKING STOPPED":"SHARED TIME LEFT";
-        words.addView(text(label,12,d.onAccent,true));TextView time=text("",50,d.onAccent,false);d.add(words,time,12);
-        TextView note=text("",13,0xFFE4EFE4,false);d.add(words,note,18);d.weighted(row,words);
-        Design.Ring ring=d.new Ring();row.addView(ring,new LinearLayout.LayoutParams(d.dp(88),d.dp(88)));hero.addView(row);d.add(content,hero,24);
+        toggle.setMinWidth(d.dp(86));toggle.setEnabled(e().running || controller.connected);toggle.setAlpha(toggle.isEnabled()?1f:.5f);title.addView(toggle);content.addView(title);
+        line("A little social. A little more life.",14,d.muted,false,8);
+        LinearLayout summary=d.card(d.mint,20),row=d.row(),words=d.column();
+        row.addView(d.icon("clock",d.ink),new LinearLayout.LayoutParams(d.dp(24),d.dp(24)));words.setPadding(d.dp(16),0,0,0);
+        TextView status=text("",20,d.ink,true),note=text("",13,d.muted,false);words.addView(status);d.add(words,note,8);d.weighted(row,words);summary.addView(row);summary.setMinimumHeight(d.dp(98));d.add(content,summary,24);
         bind(()->{
-            long remaining=RulesEngine.TOTAL_LIMIT-e().total();
-            if(mode()==RulesEngine.Mode.STOPPED){time.setText(R.string.free_time);time.setTextSize(34);note.setText(R.string.start_hint);ring.setFraction(0);}
-            else if(mode()==RulesEngine.Mode.LUNCH){time.setText(AppController.duration(e().countdown(AppController.wall(),AppController.elapsed())));note.setText(R.string.lunch_hint);ring.setFraction(e().countdown(AppController.wall(),AppController.elapsed())/(float)RulesEngine.COOLDOWN);}
-            else{time.setText(AppController.duration(remaining));note.setText(R.string.shared_cycle_hint);ring.setFraction(remaining/(float)RulesEngine.TOTAL_LIMIT);}
+            long wall=AppController.wall(),elapsed=AppController.elapsed();int available=e().availableCount(wall,elapsed);
+            String heading,detail;
+            if(!controller.connected){heading="Monitoring is off";detail="Enable App monitoring in Settings.";}
+            else if(mode()==RulesEngine.Mode.STOPPED){heading="Tracking stopped";detail="Social apps are unrestricted until you Start.";}
+            else if(mode()==RulesEngine.Mode.LUNCH){heading="Enjoy your lunch break";detail="Unrestricted until "+AppController.at(wall+e().countdown(wall,elapsed))+".";}
+            else if(mode()==RulesEngine.Mode.LUNCH_COOLDOWN){heading="A little space after lunch";detail="All apps available at "+AppController.at(wall+e().countdown(wall,elapsed))+".";}
+            else if(e().quiet(wall)){heading="Sleep Time is on";detail="Notifications hidden. App limits stay active.";}
+            else if(available==0){heading="Time for a breather";detail="Each app will return after its own cooldown.";}
+            else {heading=getResources().getQuantityString(R.plurals.apps_available,available,available);detail="Each app has its own timer and cooldown.";}
+            status.setText(heading);note.setText(detail);
         });
-        LinearLayout section=d.row();d.weighted(section,text("Your social apps",20,d.ink,true));section.addView(text("10 min each",12,d.muted,false));d.add(content,section,24);
-        for(String pkg:e().selected)appCard(pkg,false);
-        if(!controller.connected)banner("settings","App monitoring is off","Tap to enable Accessibility and restore monitoring.",24,()->{tab=2;structure="";render();});
-        else if(mode()==RulesEngine.Mode.STOPPED)banner("play","Enjoy your free time","Tracking and limits are off until you press Start.",24,null);
-        else if(mode()==RulesEngine.Mode.LUNCH)banner("clock","Lunch is unrestricted","Your next allowance starts after the following cooldown.",24,null);
-        else banner("pause","Usage paused","Resumes when a social app is in focus.",24,null);
-        if(e().quiet(AppController.wall()) && e().running)line("Sleep Time · notifications hidden, limits still active.",12,d.muted,false,16);
+        line("Your social apps",20,d.ink,true,24);for(String pkg:e().selected)appCard(pkg);
+        line("Usage pauses when you leave an app or lock your phone. Cooldowns keep counting down.",12,d.muted,false,20);
+        if(!controller.connected)banner("settings","Enable app monitoring","Tap to open setup.",20,()->{tab=2;structure="";render();});
     }
-    private void appCard(String pkg,boolean compact) {
-        LinearLayout card=d.card(d.surface,16),row=d.row(),words=d.column();
-        row.addView(d.badge(pkg),new LinearLayout.LayoutParams(d.dp(40),d.dp(40)));words.setPadding(d.dp(14),0,d.dp(8),0);
-        words.addView(text(AppController.label(this,pkg),16,d.ink,true));TextView used=text("",12,d.muted,false);if(!compact)d.add(words,used,6);d.weighted(row,words);
-        TextView left=text("",compact?12:20,compact?d.muted:d.ink,!compact);row.addView(left);card.addView(row);
-        Design.UsageBar bar=d.new UsageBar();if(!compact){LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,d.dp(4));lp.topMargin=d.dp(18);card.addView(bar,lp);}
-        d.add(content,card,12);
+    private void appCard(String pkg) {
+        LinearLayout card=d.card(d.surface,16),row=d.row(),words=d.column(),counter=d.column();
+        row.addView(d.badge(pkg),new LinearLayout.LayoutParams(d.dp(44),d.dp(44)));words.setPadding(d.dp(12),0,d.dp(6),0);
+        words.addView(text(AppController.label(this,pkg),16,d.ink,true));TextView limit=text(e().limit(pkg)/RulesEngine.MINUTE+" min per session",12,d.muted,false);d.add(words,limit,6);d.weighted(row,words);
+        counter.setGravity(Gravity.END);TextView left=text("",32,d.ink,true),caption=text("",12,d.muted,false);counter.addView(left);d.add(counter,caption,3);caption.setGravity(Gravity.END);row.addView(counter);card.addView(row);
+        LinearLayout state=d.row();TextView pill=d.pill("",false),detail=text("",12,d.muted,false);state.addView(pill);detail.setPadding(d.dp(10),0,0,0);d.weighted(state,detail);d.add(card,state,16);
+        Design.UsageBar bar=d.new UsageBar();LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,d.dp(4));lp.topMargin=d.dp(12);card.addView(bar,lp);d.add(content,card,12);
         bind(()->{
-            boolean blocked=e().blocked(pkg,AppController.wall(),AppController.elapsed());
-            left.setText(!e().running?"Free":mode()==RulesEngine.Mode.LUNCH?"Free":blocked?"Blocked":AppController.duration(e().remaining(pkg)));
-            used.setText(e().used(pkg)==0?"Not used yet":Design.usage(e().used(pkg))+" used");bar.setFraction(e().used(pkg)/(float)RulesEngine.APP_LIMIT);
+            long wall=AppController.wall(),elapsed=AppController.elapsed(),cooldown=e().cooldownRemaining(pkg,wall,elapsed);
+            boolean free=!e().running||mode()==RulesEngine.Mode.LUNCH,active=pkg.equals(e().focused()),cooling=cooldown>0;
+            String remaining=free?"Free":AppController.duration(cooling?cooldown:e().remaining(pkg));left.setText(remaining);
+            caption.setText(free?"Unrestricted":cooling?"cooldown left":"usage left");
+            String stateLabel=cooling?"Cooldown":active?"In use":e().used(pkg)>0?"Paused":"Available";
+            pill.setText(stateLabel);pill.setBackground(d.shape(cooling?d.warning:d.mint,16));pill.setTextColor(cooling?d.warningInk:d.ink);
+            String description=cooling?"Ready at "+AppController.at(wall+cooldown):active?"Timer is running":e().used(pkg)>0?"Resumes when you return":"Ready when you are";
+            detail.setText(description);state.setVisibility(free?View.GONE:View.VISIBLE);bar.setVisibility(free?View.GONE:View.VISIBLE);
+            limit.setText(!e().running?"Tracking off":mode()==RulesEngine.Mode.LUNCH?"Lunch break":e().limit(pkg)/RulesEngine.MINUTE+" min per session");
+            bar.setColor(cooling?d.muted:d.accent);bar.setFraction(free?0:cooling?1-cooldown/(float)RulesEngine.COOLDOWN:e().used(pkg)/(float)e().limit(pkg));
         });
-    }
-    private void cooldown() {
-        heading("Time for a breather","Your social time is complete for now.");
-        LinearLayout card=d.card(d.accent,28);card.setGravity(Gravity.CENTER);
-        card.addView(d.icon("clock",0xFFDCEFD0),new LinearLayout.LayoutParams(d.dp(26),d.dp(26)));
-        TextView label=text("COOLDOWN REMAINING",12,d.onAccent,true);label.setGravity(Gravity.CENTER);d.add(card,label,28);
-        TextView time=text("",62,d.onAccent,false);time.setGravity(Gravity.CENTER);d.add(card,time,16);
-        TextView fresh=text("Fresh allowance after cooldown",13,0xFFE4EFE4,false);fresh.setGravity(Gravity.CENTER);d.add(card,fresh,28);d.add(content,card,28);
-        bind(()->time.setText(AppController.duration(e().countdown(AppController.wall(),AppController.elapsed()))));
-        line("All social apps are resting",21,d.ink,true,26);for(String pkg:e().selected)appCard(pkg,true);
-        d.add(content,d.button("Stop tracking · use socials freely",false,()->{controller.stop();render();}),32);
-        if(!controller.connected)banner("settings","Monitoring needs attention","Accessibility is disconnected. Open Settings to reconnect.",16,()->{tab=2;structure="";render();});
-        if(e().quiet(AppController.wall()))line("Sleep Time · timer notifications hidden.",12,d.muted,false,16);
     }
     private void insights() {
         heading("Your insights","A clearer picture of your social time.");
         LinearLayout tabs=d.row();tabs.setPadding(d.dp(4),d.dp(4),d.dp(4),d.dp(4));tabs.setBackground(d.shape(d.line,24));
-        for(int i=0;i<2;i++){boolean value=i==1;TextView t=text(value?"This week":"Today",14,d.ink,week==value);t.setGravity(Gravity.CENTER);t.setMinHeight(d.dp(44));t.setBackground(d.shape(week==value?d.surface:d.line,24));t.setOnClickListener(v->{week=value;structure="";render();});t.setFocusable(true);t.setSelected(week==value);tabs.addView(t,new LinearLayout.LayoutParams(0,-2,1));}d.add(content,tabs,22);
-        LocalDate today=LocalDate.now(),start=week?today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)):today,end=week?start.plusDays(6):today;
-        LinearLayout hero=d.card(d.accent,22);hero.addView(text("TRACKED SOCIAL TIME",12,d.onAccent,true));TextView total=text("",46,d.onAccent,false);d.add(hero,total,20);
-        d.add(hero,text(week?start.format(DateTimeFormatter.ofPattern("d MMM"))+" – "+end.format(DateTimeFormatter.ofPattern("d MMM")):today.format(DateTimeFormatter.ofPattern("EEEE, d MMM")),13,0xFFE4EFE4,false),28);d.add(content,hero,20);
-        line(week?"Your week, at a glance":"Your day, at a glance",21,d.ink,true,26);
-        Design.Chart chart=d.new Chart();d.add(content,chart,12);chart.setLayoutParams(new LinearLayout.LayoutParams(-1,d.dp(158)));
-        TextView empty=text("",13,d.muted,false);d.add(content,empty,10);
-        line("By app",21,d.ink,true,24);LinearLayout appRows=d.column();d.add(content,appRows,12);
-        final String[] previous={""}; final Map<String,TextView> counters=new HashMap<>();
+        for(int i=0;i<2;i++){boolean value=i==1;TextView t=text(value?"This week":"Today",14,d.ink,week==value);t.setGravity(Gravity.CENTER);t.setMinHeight(d.dp(44));t.setBackground(d.shape(week==value?d.surface:d.line,24));t.setOnClickListener(v->{week=value;selectedDay=null;structure="";render();});t.setFocusable(true);t.setSelected(week==value);tabs.addView(t,new LinearLayout.LayoutParams(0,-2,1));}d.add(content,tabs,22);
+        LocalDate today=LocalDate.now(),monday=today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate start=week?(selectedDay==null?monday:selectedDay):today,end=week&&selectedDay==null?monday.plusDays(6):start;
+        if(week){
+            LinearLayout hero=d.card(d.accent,20);hero.addView(text(selectedDay==null?"THIS WEEK'S TRACKED TIME":"TRACKED TIME · SELECTED DAY",12,d.onAccent,true));
+            LinearLayout totalRow=d.row();TextView total=text("",40,d.onAccent,false);d.weighted(totalRow,total);
+            TextView period=text(selectedDay==null?monday.format(DateTimeFormatter.ofPattern("d MMM"))+" – "+end.format(DateTimeFormatter.ofPattern("d MMM")):selectedDay.format(DateTimeFormatter.ofPattern("EEE, d MMM")),12,d.onAccent,false);period.setGravity(Gravity.END);totalRow.addView(period);d.add(hero,totalRow,14);d.add(content,hero,20);
+            if(selectedDay!=null){hero.setFocusable(true);hero.setContentDescription("Selected day summary. Tap to show weekly summary.");hero.setOnClickListener(v->{selectedDay=null;structure="";render();});}
+            bind(()->total.setText(Design.usage(e().history().total(start,end))));
+            LinearLayout chartHeading=d.row();d.weighted(chartHeading,text("Your week, at a glance",20,d.ink,true));chartHeading.addView(text("Minutes",12,d.muted,false));d.add(content,chartHeading,24);
+            Design.Chart chart=d.new Chart(day->{selectedDay=day.equals(selectedDay)?null:day;structure="";render();});weeklyChart=chart;
+            LinearLayout.LayoutParams chartLp=new LinearLayout.LayoutParams(-1,d.dp(184));chartLp.topMargin=d.dp(12);content.addView(chart,chartLp);
+            bind(()->{java.util.List<Map<String,Long>> days=new ArrayList<>();for(int i=0;i<7;i++)days.add(e().history().byApp(monday.plusDays(i),monday.plusDays(i)));chart.data(days,monday,selectedDay);});
+            Set<String> legendApps=new LinkedHashSet<>(e().selected);legendApps.addAll(e().history().byApp(monday,monday.plusDays(6)).keySet());
+            HorizontalScrollView legendScroll=new HorizontalScrollView(this);legendScroll.setHorizontalScrollBarEnabled(false);LinearLayout legend=d.row();
+            for(String pkg:legendApps){LinearLayout row=d.row();View swatch=new View(this);swatch.setBackground(d.shape(d.appColor(pkg),4));row.addView(swatch,new LinearLayout.LayoutParams(d.dp(8),d.dp(8)));TextView name=text(AppController.label(this,pkg),12,d.muted,false);name.setPadding(d.dp(6),d.dp(6),d.dp(14),d.dp(6));row.addView(name);legend.addView(row);}legendScroll.addView(legend);d.add(content,legendScroll,8);
+            line("Tap a day for details. Tap it again or outside to see the week.",12,d.muted,false,8);
+            line(selectedDay==null?"By app · this week":"By app · "+selectedDay.format(DateTimeFormatter.ofPattern("EEEE")),20,d.ink,true,24);
+        }else{line(today.format(DateTimeFormatter.ofPattern("EEEE, d MMM")),16,d.ink,true,24);line("Time used today",13,d.muted,false,6);}
+        LinearLayout appRows=d.column();d.add(content,appRows,12);TextView empty=text("",13,d.muted,false);d.add(content,empty,12);
+        final String[] previous={""};final Map<String,TextView> counters=new HashMap<>();
         bind(()->{
-            var history=e().history();var apps=history.byApp(start,end);long ms=history.total(start,end);total.setText(Design.usage(ms));
-            empty.setText(ms==0?"Your first tracked minutes will appear here.":"Stored on this phone · hours and minutes");
-            long[] values;String[] labels;int selected;
-            if(week){values=new long[7];labels=new String[]{"M","T","W","T","F","S","S"};for(int i=0;i<7;i++)values[i]=history.total(start.plusDays(i),start.plusDays(i));selected=today.getDayOfWeek().getValue()-1;}
-            else{values=new long[6];labels=new String[]{"00","04","08","12","16","20"};long[] hours=history.hours(today);for(int i=0;i<24;i++)values[i/4]+=hours[i];selected=LocalTime.now().getHour()/4;}
-            chart.data(values,labels,selected);
+            var apps=e().history().byApp(start,end);long ms=e().history().total(start,end);empty.setVisibility(ms==0?View.VISIBLE:View.GONE);empty.setText(R.string.no_usage);
             Set<String> packages=new LinkedHashSet<>(e().selected);packages.addAll(apps.keySet());
             if(!previous[0].equals(packages.toString())){
                 previous[0]=packages.toString();appRows.removeAllViews();counters.clear();
-                for(String pkg:packages){LinearLayout row=d.row();row.setPadding(0,d.dp(8),0,d.dp(8));row.addView(d.badge(pkg),new LinearLayout.LayoutParams(d.dp(40),d.dp(40)));TextView name=text(AppController.label(this,pkg),16,d.ink,false);name.setPadding(d.dp(14),0,d.dp(8),0);d.weighted(row,name);TextView val=text("",16,d.ink,true);row.addView(val);appRows.addView(row);counters.put(pkg,val);}
+                for(String pkg:packages){
+                    LinearLayout card=d.card(d.surface,week?12:16),row=d.row();
+                    row.addView(d.badge(pkg),new LinearLayout.LayoutParams(d.dp(week?30:44),d.dp(week?30:44)));
+                    LinearLayout words=d.column();words.setPadding(d.dp(12),0,d.dp(6),0);words.addView(text(AppController.label(this,pkg),16,d.ink,true));if(!week)d.add(words,text("Tracked today",12,d.muted,false),6);d.weighted(row,words);
+                    TextView val=text("",week?20:26,d.ink,true);row.addView(val);card.addView(row);card.setGravity(Gravity.CENTER_VERTICAL);if(!week)card.setMinimumHeight(d.dp(100));d.add(appRows,card,counters.isEmpty()?0:10);counters.put(pkg,val);
+                }
             }
             for(String pkg:packages)counters.get(pkg).setText(Design.usage(apps.getOrDefault(pkg,0L)));
         });
-        line("Only tracked allowance time is included. Lunch and Stop periods are excluded. History starts with this version and stays on this phone.",12,d.muted,false,18);
+        line("Only tracked allowance time is included. Lunch and Stop periods are excluded. History stays on this phone.",12,d.muted,false,16);
     }
     private void settings() {
         heading("Your rhythm","Set limits that fit your day.");
+        line("APP ALLOWANCES",12,d.muted,true,30);
+        LinearLayout allowances=d.card(d.surface,16);
+        for(String pkg:e().selected){LinearLayout row=d.row();row.setPadding(0,d.dp(8),0,d.dp(8));row.addView(d.badge(pkg),new LinearLayout.LayoutParams(d.dp(36),d.dp(36)));TextView name=text(AppController.label(this,pkg),16,d.ink,true);name.setPadding(d.dp(12),0,d.dp(8),0);d.weighted(row,name);row.addView(text(e().limit(pkg)/RulesEngine.MINUTE+" min",16,d.ink,true));allowances.addView(row);}
+        d.add(content,allowances,16);line("Each app has its own 60-minute cooldown. Other apps keep their remaining allowance.",13,d.muted,false,12);
+        StringJoiner selected=new StringJoiner(", ");for(String pkg:e().selected)selected.add(AppController.label(this,pkg));settingRow("chart","Selected apps",selected.toString(),this::chooseApps);
         line("DAILY SCHEDULE",12,d.muted,true,30);
         settingRow("clock","Lunch break",e().lunchEnabled?AppController.time(e().lunchMinute)+"–"+AppController.time((e().lunchMinute+60)%1440)+" · unrestricted":"Off",this::lunchDialog);
         if(e().lunchEnabled){LinearLayout note=d.card(d.mint,16);note.addView(text("Then a little space.",14,d.ink,true));d.add(note,text("Social apps cool down from "+AppController.time((e().lunchMinute+60)%1440)+" to "+AppController.time((e().lunchMinute+120)%1440)+".",12,d.muted,false),6);d.add(content,note,8);}
         settingRow("moon","Sleep Time",e().sleepEnabled?AppController.time(e().sleepStart)+"–"+AppController.time(e().sleepEnd)+" · notifications hidden":"Off",this::sleepDialog);
         line("Limits stay active during Sleep Time.",13,d.muted,false,12);
-        line("YOUR ALLOWANCE",12,d.muted,true,30);
-        StringJoiner selected=new StringJoiner(", ");for(String pkg:e().selected)selected.add(AppController.label(this,pkg));
-        settingRow("chart","Selected apps",selected.toString(),this::chooseApps);
-        LinearLayout fixed=d.card(d.surface,18);fixed.addView(text("10 min per app",16,d.ink,true));d.add(fixed,text("20 min combined · 60 min cooldown",13,d.muted,false),8);d.add(content,fixed,16);
         line(e().pendingAt()>0?"Lunch change scheduled for "+Instant.ofEpochMilli(e().pendingAt()).atZone(ZoneId.systemDefault()).toLocalDate()+".":"Lunch schedule edits apply tomorrow.",13,d.muted,false,24);
         line("Use Stop on Home when you need free access.",12,d.muted,false,8);
         line("APP SETUP",12,d.muted,true,30);
@@ -182,7 +203,7 @@ public final class MainActivity extends Activity {
         });
         settingRow("clock","Precise schedule alarms",getSystemService(AlarmManager.class).canScheduleExactAlarms()?"Allowed":"Optional · improves idle transitions",()->open(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName()))));
         settingRow("settings","Battery & app settings","Review if Samsung delays monitoring",()->open(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
-        line("Samsung controls live notification availability and layout. A standard timer notification is used as the fallback.",12,d.muted,false,20);
+        line("Samsung controls live notification availability and layout. A standard timer notification is restored after dismissal while monitoring runs. Android still controls notification visibility.",12,d.muted,false,20);
         line("Offline and personal. Accessibility reads app identity, not screen text. Stop, uninstalling, force-stop, or disabling Accessibility can bypass limits. Blocking returns to phone Home; it cannot force-stop other apps or stop background audio.",12,d.muted,false,16);
     }
     private void settingRow(String icon,String title,String subtitle,Runnable action) {

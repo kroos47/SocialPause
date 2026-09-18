@@ -4,19 +4,22 @@ import java.io.Serializable;
 import java.time.*;
 import java.util.*;
 
-/** Pure rules, owned by one thread. Usage uses elapsed time; schedules use local wall time. */
+/** Main-thread state machine. Elapsed time owns app timers; local wall time owns schedules. */
 public final class RulesEngine implements Serializable {
+    // Keep compatible with v0.1/v0.2 to preserve settings and history during migration.
     private static final long serialVersionUID = 1L;
     public static final long MINUTE = 60_000L, APP_LIMIT = 10 * MINUTE,
-            TOTAL_LIMIT = 20 * MINUTE, COOLDOWN = 60 * MINUTE;
-    public enum Mode { STOPPED, READY, ACTIVE, LUNCH, COOLDOWN }
+            INSTAGRAM_LIMIT = 7 * MINUTE, COOLDOWN = 60 * MINUTE;
+    public enum Mode { STOPPED, READY, ACTIVE, LUNCH, LUNCH_COOLDOWN }
     public final Set<String> selected = new LinkedHashSet<>(List.of("com.instagram.android", "com.twitter.android", "com.reddit.frontpage"));
     private final Map<String, Long> usage = new HashMap<>();
+    private Map<String, Long> cooldowns = new HashMap<>();
+    private int stateVersion = 3;
     private long cycleSerial;
-    private UsageHistory history; // Null in v0.1 saved state; initialized lazily without losing budgets.
+    private UsageHistory history;
     public boolean running, lunchEnabled = true, sleepEnabled = true;
     public int lunchMinute = 840, sleepStart = 1320, sleepEnd = 600;
-    private long cooldownEnd, handledLunch = Long.MIN_VALUE, activeLunch = Long.MIN_VALUE;
+    private long handledLunch = Long.MIN_VALUE, activeLunch = Long.MIN_VALUE;
     private long pendingAt;
     private int pendingMinute;
     private boolean pendingEnabled;
@@ -26,21 +29,37 @@ public final class RulesEngine implements Serializable {
 
     public void attach(boolean sameBoot) {
         cursor = -1; focused = null; zone = ZoneId.systemDefault();
+        if (cooldowns == null) cooldowns = new HashMap<>();
+        if (stateVersion < 3) { reset(); stateVersion = 3; } // Exactly one fresh-allowance upgrade.
         if (!sameBoot) { reset(); handledLunch = Long.MIN_VALUE; activeLunch = Long.MIN_VALUE; }
     }
     public void start(long wall, long elapsed) {
-        reset(); running = true; focused = null; cursor = elapsed; settle(wall, elapsed);
+        reset(); cycleSerial++; running = true; focused = null; cursor = elapsed; settle(wall, elapsed);
     }
     public void stop(long wall, long elapsed) { advance(wall, elapsed); running = false; focused = null; }
-    private void reset() { usage.clear(); cooldownEnd = 0; cycleSerial++; }
+    private void reset() { usage.clear(); cooldowns.clear(); }
+    /** Identifies a manual monitoring run, not an individual app cycle. */
     public long cycleId() { return cycleSerial; }
-    public UsageHistory history() {
-        if (history == null) history = new UsageHistory();
-        return history;
-    }
+    public UsageHistory history() { if (history == null) history = new UsageHistory(); return history; }
+    public long limit(String pkg) { return "com.instagram.android".equals(pkg) ? INSTAGRAM_LIMIT : APP_LIMIT; }
     public long used(String pkg) { return usage.getOrDefault(pkg, 0L); }
-    public long total() { return usage.values().stream().mapToLong(Long::longValue).sum(); }
-    public long remaining(String pkg) { return Math.max(0, APP_LIMIT - used(pkg)); }
+    public long remaining(String pkg) { return Math.max(0, limit(pkg) - used(pkg)); }
+    public long cooldownRemaining(String pkg, long wall, long elapsed) {
+        if (!running || !selected.contains(pkg) || mode(wall, elapsed) == Mode.LUNCH) return 0;
+        if (mode(wall, elapsed) == Mode.LUNCH_COOLDOWN) return countdown(wall, elapsed);
+        return Math.max(0, cooldowns.getOrDefault(pkg, 0L) - elapsed);
+    }
+    public String nextAvailableApp(long wall, long elapsed) {
+        String result = null; long least = Long.MAX_VALUE;
+        for (String pkg : selected) {
+            long left = cooldownRemaining(pkg, wall, elapsed);
+            if (left > 0 && left < least) { least = left; result = pkg; }
+        }
+        return result;
+    }
+    public int availableCount(long wall, long elapsed) {
+        int count = 0; for (String pkg : selected) if (!blocked(pkg, wall, elapsed)) count++; return count;
+    }
     public String focused() { return focused; }
     public long pendingAt() { return pendingAt; }
     public void select(Set<String> packages) {
@@ -58,9 +77,7 @@ public final class RulesEngine implements Serializable {
         pendingAt = Instant.ofEpochMilli(wall).atZone(zone).toLocalDate().plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli();
         if (activeLunch != Long.MIN_VALUE) pendingAt = Math.max(pendingAt, activeLunch + 2 * COOLDOWN);
     }
-    private static void checkMinute(int value) {
-        if (value < 0 || value >= 1440) throw new IllegalArgumentException("Invalid time.");
-    }
+    private static void checkMinute(int value) { if (value < 0 || value >= 1440) throw new IllegalArgumentException("Invalid time."); }
     public boolean quiet(long wall) {
         var t = Instant.ofEpochMilli(wall).atZone(zone); int m = t.getHour() * 60 + t.getMinute();
         return sleepEnabled && (sleepStart < sleepEnd ? m >= sleepStart && m < sleepEnd : m >= sleepStart || m < sleepEnd);
@@ -74,7 +91,6 @@ public final class RulesEngine implements Serializable {
     private void settle(long wall, long elapsed) {
         if (pendingAt > 0 && wall >= pendingAt) {
             lunchEnabled = pendingEnabled; lunchMinute = pendingMinute;
-            // Do not invent yesterday's lunch when tomorrow's edit is applied.
             handledLunch = latestLunch(pendingAt - 1); pendingAt = 0;
         }
         if (!running) return;
@@ -85,24 +101,30 @@ public final class RulesEngine implements Serializable {
         if (activeLunch != Long.MIN_VALUE && wall >= activeLunch + 2 * COOLDOWN) {
             activeLunch = Long.MIN_VALUE; reset(); focused = null;
         }
-        if (cooldownEnd > 0 && elapsed >= cooldownEnd) { reset(); focused = null; }
-        if (mode(wall, elapsed) == Mode.COOLDOWN) focused = null;
+        // Finishing one app's cooldown must never clear another app's current focus.
+        var iterator = cooldowns.entrySet().iterator();
+        while (iterator.hasNext()) {
+            var entry = iterator.next();
+            if (elapsed >= entry.getValue()) { usage.remove(entry.getKey()); iterator.remove(); }
+        }
+        if (mode(wall, elapsed) == Mode.LUNCH_COOLDOWN) focused = null;
     }
     public Mode mode(long wall, long elapsed) {
         if (!running) return Mode.STOPPED;
         if (activeLunch != Long.MIN_VALUE && wall >= activeLunch && wall < activeLunch + COOLDOWN) return Mode.LUNCH;
-        if ((activeLunch != Long.MIN_VALUE && wall >= activeLunch + COOLDOWN && wall < activeLunch + 2 * COOLDOWN) || cooldownEnd > elapsed) return Mode.COOLDOWN;
+        if (activeLunch != Long.MIN_VALUE && wall >= activeLunch + COOLDOWN && wall < activeLunch + 2 * COOLDOWN) return Mode.LUNCH_COOLDOWN;
         return focused != null ? Mode.ACTIVE : Mode.READY;
     }
+    /** Only global schedule countdowns live here. Usage/cooldown is always queried by app. */
     public long countdown(long wall, long elapsed) {
         Mode m = mode(wall, elapsed);
         if (m == Mode.LUNCH) return activeLunch + COOLDOWN - wall;
-        if (m == Mode.COOLDOWN) return activeLunch != Long.MIN_VALUE ? Math.max(0, activeLunch + 2 * COOLDOWN - wall) : Math.max(0, cooldownEnd - elapsed);
-        return Math.min(TOTAL_LIMIT - total(), focused == null ? TOTAL_LIMIT : remaining(focused));
+        if (m == Mode.LUNCH_COOLDOWN) return activeLunch + 2 * COOLDOWN - wall;
+        return 0;
     }
     public boolean blocked(String pkg, long wall, long elapsed) {
-        if (!running || !selected.contains(pkg) || mode(wall, elapsed) == Mode.LUNCH) return false;
-        return mode(wall, elapsed) == Mode.COOLDOWN || remaining(pkg) == 0 || total() >= TOTAL_LIMIT;
+        return running && selected.contains(pkg) && mode(wall, elapsed) != Mode.LUNCH
+                && (mode(wall, elapsed) == Mode.LUNCH_COOLDOWN || cooldowns.getOrDefault(pkg, 0L) > elapsed);
     }
     public void focus(String pkg, boolean unlocked, long wall, long elapsed) {
         advance(wall, elapsed);
@@ -115,13 +137,13 @@ public final class RulesEngine implements Serializable {
             long w = wall - (elapsed - cursor); settle(w, cursor);
             long step = Math.min(elapsed - cursor, nextBoundary(w, cursor) - w);
             boolean count = mode(w, cursor) == Mode.ACTIVE && focused != null;
-            if (count) step = Math.min(step, Math.min(remaining(focused), TOTAL_LIMIT - total()));
+            if (count) step = Math.min(step, remaining(focused));
             if (step <= 0) throw new IllegalStateException("Timing boundary did not advance.");
             if (count) {
-                history().record(focused, w, step, zone);
-                usage.put(focused, used(focused) + step);
-                if (total() >= TOTAL_LIMIT) { cooldownEnd = cursor + step + COOLDOWN; focused = null; }
-                else if (remaining(focused) == 0) focused = null;
+                String app = focused;
+                history().record(app, w, step, zone);
+                usage.put(app, used(app) + step);
+                if (remaining(app) == 0) { cooldowns.put(app, cursor + step + COOLDOWN); focused = null; }
             }
             cursor += step;
         }
@@ -138,7 +160,7 @@ public final class RulesEngine implements Serializable {
             if (activeLunch + COOLDOWN > wall) next = Math.min(next, activeLunch + COOLDOWN);
             if (activeLunch + 2 * COOLDOWN > wall) next = Math.min(next, activeLunch + 2 * COOLDOWN);
         }
-        if (cooldownEnd > elapsed) next = Math.min(next, wall + cooldownEnd - elapsed);
+        for (long end : cooldowns.values()) if (end > elapsed) next = Math.min(next, wall + end - elapsed);
         if (sleepEnabled) for (int minute : new int[]{sleepStart, sleepEnd}) {
             var now = Instant.ofEpochMilli(wall).atZone(zone);
             var t = now.toLocalDate().atTime(minute / 60, minute % 60).atZone(zone);

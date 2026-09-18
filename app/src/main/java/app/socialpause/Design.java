@@ -12,7 +12,7 @@ import java.util.Locale;
 final class Design {
     final Context c;
     final boolean dark;
-    final int background, surface, ink, muted, line, mint, accent, onAccent = Color.WHITE;
+    final int background, surface, ink, muted, line, mint, accent, onAccent, warning, warningInk;
     Design(Context c) {
         this.c = c; dark = (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         background = Color.parseColor(dark ? "#14251F" : "#F6F8F2");
@@ -21,7 +21,8 @@ final class Design {
         muted = Color.parseColor(dark ? "#B0C3B5" : "#66796E");
         line = Color.parseColor(dark ? "#3E5648" : "#DFE5DA");
         mint = Color.parseColor(dark ? "#314E35" : "#E0F0D3");
-        accent = Color.parseColor("#195E4C");
+        accent = Color.parseColor(dark?"#98CBA7":"#195E4C");
+        onAccent=dark?0xFF14251F:Color.WHITE;warning=dark?0xFF453C24:0xFFFFF0CF;warningInk=dark?0xFFF1D095:0xFF7D5720;
     }
     int dp(float v) { return Math.round(v * c.getResources().getDisplayMetrics().density); }
     GradientDrawable shape(int color, int radius) {
@@ -29,7 +30,7 @@ final class Design {
     }
     TextView text(String value, int size, int color, boolean bold) {
         TextView t = new TextView(c); t.setText(value); t.setTextSize(size); t.setTextColor(color);
-        t.setTypeface(Typeface.create("sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL));
+        t.setTypeface(Typeface.create(bold?"sans-serif-medium":"sans-serif",Typeface.NORMAL));
         t.setFontFeatureSettings("tnum"); t.setIncludeFontPadding(false);
         return t;
     }
@@ -42,15 +43,28 @@ final class Design {
     void weighted(LinearLayout parent, View child) { parent.addView(child, new LinearLayout.LayoutParams(0, -2, 1)); }
     Button button(String label, boolean filled, Runnable action) {
         Button b = new Button(c); b.setText(label); b.setAllCaps(false); b.setTextSize(14); b.setMinHeight(dp(48)); b.setMinimumHeight(dp(48));
-        b.setTextColor(filled ? onAccent : ink); b.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        b.setTextColor(filled ? onAccent : ink); b.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
         b.setBackground(shape(filled ? accent : surface, 28)); b.setPadding(dp(18), dp(10), dp(18), dp(10));
         b.setOnClickListener(v -> action.run()); return b;
     }
-    TextView badge(String pkg) {
-        String letter = pkg.equals("com.instagram.android") ? "I" : pkg.equals("com.twitter.android") ? "X" : pkg.equals("com.reddit.frontpage") ? "r" : AppController.label(c, pkg).substring(0,1).toUpperCase(Locale.getDefault());
-        int color = Color.parseColor(pkg.equals("com.instagram.android") ? "#AD4379" : pkg.equals("com.reddit.frontpage") ? "#C85B37" : "#233B32");
-        TextView v = text(letter, 22, Color.WHITE, true); v.setGravity(Gravity.CENTER); v.setBackground(shape(color, 12));
-        v.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO); return v;
+    static int appIcon(String pkg) {
+        return switch(pkg){case "com.instagram.android"->R.drawable.ic_instagram;case "com.twitter.android"->R.drawable.ic_x;case "com.reddit.frontpage"->R.drawable.ic_reddit;default->R.drawable.ic_pause;};
+    }
+    View badge(String pkg) {
+        FrameLayout frame=new FrameLayout(c);frame.setBackground(shape(appColor(pkg),12));
+        ImageView glyph=new ImageView(c){@Override protected void onSizeChanged(int w,int h,int oldw,int oldh){super.onSizeChanged(w,h,oldw,oldh);int inset=Math.round(Math.min(w,h)*.23f);setPadding(inset,inset,inset,inset);}};glyph.setImageResource(appIcon(pkg));glyph.setImageTintList(android.content.res.ColorStateList.valueOf(dark?background:Color.WHITE));
+        FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-1,-1);frame.addView(glyph,lp);
+        frame.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);return frame;
+    }
+    TextView pill(String label,boolean cooling) {
+        TextView v=text(label,12,cooling?warningInk:ink,false);v.setBackground(shape(cooling?warning:mint,16));v.setPadding(dp(10),dp(5),dp(10),dp(5));return v;
+    }
+    int appColor(String pkg) {
+        if(pkg.equals("com.instagram.android"))return dark?0xFFE48DB6:0xFFAD4379;
+        if(pkg.equals("com.reddit.frontpage"))return dark?0xFFEEA087:0xFFC85B37;
+        if(pkg.equals("com.twitter.android"))return dark?0xFFB2C5BB:0xFF233B32;
+        int[] palette={0xFF397EB0,0xFF7761A8,0xFF328275,0xFFAC7032,0xFF8B617C};
+        return palette[Math.floorMod(pkg.hashCode(),palette.length)];
     }
     static String usage(long millis) {
         long sec = Math.max(0, millis) / 1000, min = sec / 60;
@@ -94,33 +108,64 @@ final class Design {
         }
     }
     final class UsageBar extends View {
-        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG); float fraction;
+        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG); float fraction; int color=accent;
+        void setColor(int color){this.color=color;invalidate();}
         UsageBar() { super(c); setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO); }
         void setFraction(float f) { fraction=Math.max(0,Math.min(1,f)); invalidate(); }
         @Override protected void onDraw(Canvas canvas) {
             p.setColor(line); canvas.drawRoundRect(0,0,getWidth(),getHeight(),getHeight()/2f,getHeight()/2f,p);
-            p.setColor(dark ? 0xFF98CBA7 : accent); canvas.drawRoundRect(0,0,getWidth()*fraction,getHeight(),getHeight()/2f,getHeight()/2f,p);
+            p.setColor(color); canvas.drawRoundRect(0,0,getWidth()*fraction,getHeight(),getHeight()/2f,getHeight()/2f,p);
         }
     }
-    final class Chart extends View {
-        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG); long[] values = new long[0]; String[] labels = new String[0]; int selected;
-        Chart() { super(c); setFocusable(true); }
-        void data(long[] values, String[] labels, int selected) {
-            this.values=values; this.labels=labels; this.selected=selected;
-            StringBuilder description=new StringBuilder("Tracked usage. ");
-            for(int i=0;i<values.length;i++) description.append(labels[i]).append(": ").append(usage(values[i])).append(". ");
-            setContentDescription(description); invalidate();
+    /** Stack colors match app badges. Day targets remain individually accessible. */
+    final class Chart extends FrameLayout {
+        private final DayBar[] bars=new DayBar[7];
+        private final java.util.function.Consumer<java.time.LocalDate> listener;
+        private final Paint grid=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private long maximum=20*60_000;
+        Chart(java.util.function.Consumer<java.time.LocalDate> listener) {
+            super(c);this.listener=listener;setWillNotDraw(false);
+            LinearLayout columns=row();LayoutParams lp=new LayoutParams(-1,-1);lp.leftMargin=dp(28);addView(columns,lp);
+            for(int i=0;i<7;i++){bars[i]=new DayBar();columns.addView(bars[i],new LinearLayout.LayoutParams(0,-1,1));}
         }
-        @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas); if(values.length==0)return;
-            long max=60_000; for(long v:values)max=Math.max(max,v);
-            float cell=getWidth()/(float)values.length, baseline=getHeight()-dp(32), height=baseline-dp(12);
-            for(int i=0;i<values.length;i++) {
-                float bar=Math.max(values[i]>0?dp(4):dp(2),height*values[i]/max), x=cell*i+cell*.26f;
-                p.setColor(i==selected?(dark?0xFF9BCEA3:accent):(dark?0xFF4E7055:0xFFC7DFC0));
-                canvas.drawRoundRect(x,baseline-bar,x+cell*.48f,baseline,dp(7),dp(7),p);
-                p.setColor(muted); p.setTextSize(dp(12)*getResources().getConfiguration().fontScale); p.setTextAlign(Paint.Align.CENTER);
-                canvas.drawText(labels[i],cell*(i+.5f),getHeight()-dp(6),p);
+        boolean containsDay(float x,float y) {
+            Rect bounds=new Rect();for(DayBar bar:bars)if(bar.isEnabled()&&bar.getGlobalVisibleRect(bounds)&&bounds.contains((int)x,(int)y))return true;return false;
+        }
+        void data(java.util.List<java.util.Map<String,Long>> days,java.time.LocalDate monday,java.time.LocalDate selection){
+            long max=1;for(var day:days){long sum=0;for(long value:day.values())sum+=value;max=Math.max(max,sum);}
+            maximum=((max+20*60_000-1)/(20*60_000))*(20*60_000);
+            for(int i=0;i<7;i++)bars[i].data(days.get(i),monday.plusDays(i),maximum,monday.plusDays(i).equals(selection));invalidate();
+        }
+        @Override protected void onDraw(Canvas canvas){
+            super.onDraw(canvas);float base=getHeight()-dp(32),height=base-dp(12);
+            grid.setTextAlign(Paint.Align.RIGHT);grid.setTextSize(dp(11));
+            for(int tick=0;tick<=2;tick++){float y=base-height*tick/2;grid.setColor(line);canvas.drawLine(dp(28),y,getWidth(),y,grid);grid.setColor(muted);canvas.drawText(Long.toString(maximum/60_000*tick/2),dp(18),y+dp(4),grid);}
+        }
+        final class DayBar extends View {
+            final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+            java.util.Map<String,Long> values=java.util.Map.of();java.time.LocalDate day;long max=60_000,total;
+            DayBar(){super(c);setFocusable(true);setClickable(true);setMinimumHeight(dp(48));setOnClickListener(v->{if(day!=null)listener.accept(day);});}
+            void data(java.util.Map<String,Long> values,java.time.LocalDate day,long max,boolean selected){
+                java.util.Map<String,Long> ordered=new java.util.LinkedHashMap<>();
+                for(String pkg:java.util.List.of("com.instagram.android","com.twitter.android","com.reddit.frontpage"))if(values.containsKey(pkg))ordered.put(pkg,values.get(pkg));
+                for(var entry:values.entrySet())ordered.putIfAbsent(entry.getKey(),entry.getValue());
+                this.values=ordered;this.day=day;this.max=max;total=0;for(long v:values.values())total+=v;setSelected(selected);setEnabled(!day.isAfter(java.time.LocalDate.now()));
+                StringBuilder description=new StringBuilder(day.format(java.time.format.DateTimeFormatter.ofPattern("EEEE, d MMM"))).append(": ").append(usage(total));
+                for(var entry:values.entrySet())description.append(". ").append(AppController.label(c,entry.getKey())).append(" ").append(usage(entry.getValue()));
+                setContentDescription(description+(selected?". Selected. Tap again for the week.":". Tap for this day."));invalidate();
+            }
+            @Override public void onInitializeAccessibilityNodeInfo(android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(info);info.setClassName(Button.class.getName());}
+            @Override protected void onDraw(Canvas canvas){
+                super.onDraw(canvas);if(day==null)return;
+                float left=getWidth()*.22f,right=getWidth()*.78f,base=getHeight()-dp(32),height=base-dp(12),y=base;
+                if(isSelected()||isFocused()){
+                    p.setStyle(Paint.Style.FILL);p.setColor(surface);canvas.drawRoundRect(dp(2),dp(2),getWidth()-dp(2),getHeight()-dp(2),dp(10),dp(10),p);
+                    p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(2));p.setColor(accent);canvas.drawRoundRect(dp(2),dp(2),getWidth()-dp(2),getHeight()-dp(2),dp(10),dp(10),p);p.setStyle(Paint.Style.FILL);
+                }
+                if(total==0){p.setColor(line);canvas.drawRoundRect(left,base-dp(2),right,base,dp(1),dp(1),p);}
+                for(var entry:values.entrySet()){float h=height*entry.getValue()/max;p.setColor(appColor(entry.getKey()));canvas.drawRect(left,y-h,right,y,p);y-=h;}
+                p.setColor(isEnabled()?ink:muted);p.setTextSize(dp(12)*Math.min(1.3f,getResources().getConfiguration().fontScale));p.setTextAlign(Paint.Align.CENTER);
+                canvas.drawText(day.getDayOfWeek().getDisplayName(java.time.format.TextStyle.NARROW,Locale.getDefault()),getWidth()/2f,getHeight()-dp(9),p);
             }
         }
     }

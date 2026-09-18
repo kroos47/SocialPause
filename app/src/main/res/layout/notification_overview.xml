@@ -1,0 +1,6 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+    <TextView android:id="@+id/overview_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:textAppearance="@android:style/TextAppearance.Material.Notification.Title" android:textStyle="bold" android:paddingBottom="4dp" />
+    <LinearLayout android:id="@+id/timer_rows" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+    <TextView android:id="@+id/overview_note" android:layout_width="match_parent" android:layout_height="wrap_content" android:textAppearance="@android:style/TextAppearance.Material.Notification.Info" android:paddingTop="6dp" />
+</LinearLayout>

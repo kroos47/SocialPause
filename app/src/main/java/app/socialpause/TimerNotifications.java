@@ -6,59 +6,95 @@ import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Icon;
 import android.os.*;
-import java.time.*;
-import java.time.format.DateTimeFormatter;
+import android.widget.RemoteViews;
+import android.content.res.ColorStateList;
 import app.socialpause.engine.*;
 
-/** One standard system notification; Samsung owns its final layout and live-chip eligibility. */
+/** Active app uses a standard live-eligible template; the idle overview has individual timer rows. */
 final class TimerNotifications {
     private final Context context;
     private final NotificationManager manager;
+    private final SharedPreferences visibility;
     private String previous="";
     TimerNotifications(Context c) {
         context=c;manager=c.getSystemService(NotificationManager.class);
+        visibility=c.getSharedPreferences("notification-visibility",Context.MODE_PRIVATE);
         NotificationChannel channel=new NotificationChannel("timer","Social timers",NotificationManager.IMPORTANCE_LOW);
         channel.setSound(null,null);channel.enableVibration(false);manager.createNotificationChannel(channel);
     }
-    private int appIcon(String pkg) {
-        if("com.instagram.android".equals(pkg))return R.drawable.ic_instagram;
-        if("com.twitter.android".equals(pkg))return R.drawable.ic_x;
-        if("com.reddit.frontpage".equals(pkg))return R.drawable.ic_reddit;
-        return R.drawable.ic_pause;
+    void newRun(){visibility.edit().remove("ordinary-run").remove("dismissed-cycle").apply();previous="";}
+    void dismissed(long run){visibility.edit().putLong("ordinary-run",run).apply();previous="";}
+    private RemoteViews overview(TimerPresentation p, String title, long wall) {
+        Design d=new Design(context);RemoteViews view=new RemoteViews(context.getPackageName(),R.layout.notification_overview);
+        view.setTextViewText(R.id.overview_title,title);view.removeAllViews(R.id.timer_rows);
+        for(TimerPresentation.Row row:p.rows){
+            RemoteViews item=new RemoteViews(context.getPackageName(),R.layout.notification_timer_row);
+            item.setImageViewResource(R.id.timer_icon,Design.appIcon(row.app()));item.setInt(R.id.timer_icon,"setColorFilter",d.appColor(row.app()));
+            item.setTextViewText(R.id.timer_name,AppController.label(context,row.app()));
+            item.setTextViewText(R.id.timer_value,AppController.duration(row.remaining())+(row.cooling()?" cooldown":" left"));
+            item.setProgressBar(R.id.timer_progress,100,row.progress(),false);
+            item.setColorStateList(R.id.timer_progress,"setProgressTintList",ColorStateList.valueOf(row.cooling()?d.muted:d.appColor(row.app())));
+            item.setContentDescription(R.id.timer_progress,row.cooling()?"Available at "+AppController.at(wall+row.remaining()):"Usage allowance remaining");
+            view.addView(R.id.timer_rows,item);
+        }
+        view.setTextViewText(R.id.overview_note,"Tap to open SocialPause");return view;
     }
     void update(RulesEngine e,boolean connected) {
-        long wall=AppController.wall(),elapsed=AppController.elapsed();TimerPresentation p=TimerPresentation.of(e,connected,wall,elapsed);
-        if(p.kind==TimerPresentation.Kind.HIDDEN || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {manager.cancel(10);previous="";return;}
-        String label=p.app==null?"":AppController.label(context,p.app), title, detail;
-        long shared=RulesEngine.TOTAL_LIMIT-e.total();
-        switch(p.kind) {
-            case APP -> {title=label;detail="Time remaining in "+label+" · Shared allowance "+AppController.duration(shared);}
-            case SHARED -> {title="Social allowance";detail="Until all social apps are blocked · "+label+" has "+AppController.duration(e.remaining(p.app))+" app time left";}
-            case PAUSED -> {title="Usage paused";detail="Shared allowance remaining · Resume by opening a selected app";}
-            case LUNCH -> {title="Lunch break · unrestricted";detail="Cooldown starts at "+at(wall+p.remaining)+" · Fresh allowance at "+at(wall+p.remaining+RulesEngine.COOLDOWN);}
-            default -> {title="Social apps blocked";detail="Cooldown remaining · Available again at "+at(wall+p.remaining);}
+        long wall=AppController.wall(),elapsed=AppController.elapsed();
+        TimerPresentation p=TimerPresentation.of(e,connected,wall,elapsed);
+        if(p.kind==TimerPresentation.Kind.HIDDEN || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED || !manager.areNotificationsEnabled()) {
+            manager.cancel(10);previous="";return;
         }
-        // A user may dismiss the system surface. Do not repeatedly repost it within the same cycle.
-        String key=e.cycleId()+":"+p.kind+":"+p.app+":"+p.remaining/1000+":"+detail;
+        boolean awake=context.getSystemService(PowerManager.class).isInteractive();
+        Design d=new Design(context);
+        String title,body;boolean overview=p.kind==TimerPresentation.Kind.OVERVIEW||p.kind==TimerPresentation.Kind.ALL_COOLDOWN||p.kind==TimerPresentation.Kind.LUNCH_COOLDOWN;
+        switch(p.kind) {
+            case APP -> {title=AppController.label(context,p.app);body="Usage remaining · "+e.limit(p.app)/RulesEngine.MINUTE+" min allowance";}
+            case LUNCH -> {title="Lunch break · unrestricted";body="Cooldown starts at "+AppController.at(wall+p.remaining)+" · Fresh allowances at "+AppController.at(wall+p.remaining+RulesEngine.COOLDOWN);}
+            case LUNCH_COOLDOWN -> {title="After lunch · all apps resting";body="Each app is available again at "+AppController.at(wall+p.remaining);}
+            default -> {
+                title=p.kind==TimerPresentation.Kind.ALL_COOLDOWN?"All apps cooling down":"Your app timers";
+                StringBuilder rows=new StringBuilder();
+                if(p.app!=null)rows.append("Next available: ").append(AppController.label(context,p.app)).append(" at ").append(AppController.at(wall+p.remaining)).append('\n');
+                for(TimerPresentation.Row row:p.rows) {
+                    rows.append(AppController.label(context,row.app())).append(" · ");
+                    if(row.cooling()) {
+                        rows.append("Cooldown ");
+                        if(awake)rows.append(AppController.duration(row.remaining())).append(" · ");
+                        rows.append("until ").append(AppController.at(wall+row.remaining()));
+                    } else rows.append(AppController.duration(row.remaining())).append(" available");
+                    rows.append('\n');
+                }
+                body=rows.toString().stripTrailing();
+            }
+        }
+        boolean ordinary=visibility.getLong("ordinary-run",-1)==e.cycleId();
+        String key=e.cycleId()+":"+p.kind+":"+p.app+":"+(awake?p.remaining/1000:p.remaining/60000)+":"+p.rows.stream().map(r->r.app()+":"+r.remaining()/1000+":"+r.cooling()).collect(java.util.stream.Collectors.toList())+":"+body+":"+ordinary+":"+awake;
         if(key.equals(previous))return;previous=key;
-        if(NotificationDismissReceiver.dismissed(context,e.cycleId()))return;
-        String body=p.ticking()?detail:AppController.duration(p.remaining)+" · "+detail;
-        int icon=p.kind==TimerPresentation.Kind.APP?appIcon(p.app):R.drawable.ic_pause;
+        int icon=p.kind==TimerPresentation.Kind.APP?Design.appIcon(p.app):R.drawable.ic_pause;
         PendingIntent open=PendingIntent.getActivity(context,0,new Intent(context,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-        PendingIntent dismiss=PendingIntent.getBroadcast(context,10,new Intent(context,NotificationDismissReceiver.class).setAction(NotificationDismissReceiver.ACTION).putExtra("cycle",e.cycleId()),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent dismiss=PendingIntent.getBroadcast(context,10,new Intent(context,NotificationDismissReceiver.class).setAction(NotificationDismissReceiver.ACTION).putExtra("run",e.cycleId()),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         Notification.Builder b=new Notification.Builder(context,"timer").setSmallIcon(icon).setContentTitle(title)
-                .setContentText(body)
-                .setContentIntent(open).setDeleteIntent(dismiss).setOngoing(true).setOnlyAlertOnce(true).setColor(0xFF195E4C).setCategory(Notification.CATEGORY_PROGRESS);
-        if(Build.VERSION.SDK_INT>=36) {
-            Notification.ProgressStyle style=new Notification.ProgressStyle().setProgressSegments(java.util.List.of(new Notification.ProgressStyle.Segment(100).setColor(0xFF195E4C)))
-                    .setProgress(p.progress()).setProgressTrackerIcon(Icon.createWithResource(context,icon));
-            b.setStyle(style);
-        } else b.setStyle(new Notification.BigTextStyle().bigText(body)).setProgress(100,p.progress(),false);
-        if(p.ticking()) {
-            b.setWhen(wall+p.remaining).setUsesChronometer(true).setChronometerCountDown(true);
-            Bundle extras=new Bundle();extras.putBoolean("android.requestPromotedOngoing",true);b.addExtras(extras);
-        } else b.setShowWhen(false).setUsesChronometer(false);
+                .setContentText(body).setContentIntent(open).setDeleteIntent(dismiss).setOngoing(true).setOnlyAlertOnce(true)
+                .setColor(p.activeChip()?d.appColor(p.app):d.accent).setCategory(Notification.CATEGORY_PROGRESS);
+        if(p.activeChip() && Build.VERSION.SDK_INT>=36) {
+            b.setStyle(new Notification.ProgressStyle().setProgressSegments(java.util.List.of(new Notification.ProgressStyle.Segment(100).setColor(d.appColor(p.app))))
+                    .setProgress(p.progress()).setProgressTrackerIcon(Icon.createWithResource(context,icon)));
+        } else if(overview) {
+            b.setStyle(new Notification.DecoratedCustomViewStyle()).setCustomBigContentView(overview(p,title,wall));
+        } else {
+            b.setStyle(new Notification.BigTextStyle().bigText(body));
+            if(p.activeChip())b.setProgress(100,p.progress(),false);
+        }
+        if(p.activeChip()) {
+            // A system chronometer keeps the chip moving between notification updates.
+            b.setWhen(wall+p.remaining).setShowWhen(true).setUsesChronometer(true).setChronometerCountDown(true);
+            if(Build.VERSION.SDK_INT>=36)b.setShortCriticalText(null);
+            if(!ordinary){Bundle extras=new Bundle();extras.putBoolean("android.requestPromotedOngoing",true);b.addExtras(extras);}
+        } else {
+            b.setWhen(0).setShowWhen(false).setUsesChronometer(false);
+            if(Build.VERSION.SDK_INT>=36)b.setShortCriticalText("");
+        }
         manager.notify(10,b.build());
     }
-    private static String at(long wall){return Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("h:mm a"));}
 }
