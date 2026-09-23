@@ -14,7 +14,7 @@ final class Design {
     final boolean dark;
     final int background, surface, ink, muted, line, mint, accent, onAccent, warning, warningInk;
     Design(Context c) {
-        this.c = c; dark = (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        this.c = c; dark = Appearance.isDark(c);
         background = Color.parseColor(dark ? "#14251F" : "#F6F8F2");
         surface = Color.parseColor(dark ? "#223A31" : "#FFFFFF");
         ink = Color.parseColor(dark ? "#E7F1E5" : "#1E3932");
@@ -46,6 +46,28 @@ final class Design {
         b.setTextColor(filled ? onAccent : ink); b.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
         b.setBackground(shape(filled ? accent : surface, 28)); b.setPadding(dp(18), dp(10), dp(18), dp(10));
         b.setOnClickListener(v -> action.run()); return b;
+    }
+    /** Native checkable control, using the exact sun/moon paths from the supplied export. */
+    final class ThemeSwitch extends CompoundButton {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.drawable.Drawable sun, moon;
+        ThemeSwitch() {
+            super(c);setButtonDrawable((android.graphics.drawable.Drawable)null);setBackground(shape(line,24));
+            setContentDescription(c.getString(R.string.dark_mode));setChecked(dark);setFocusable(true);setClickable(true);
+            setMinimumWidth(dp(86));setMinimumHeight(dp(48));
+            sun=c.getDrawable(R.drawable.ic_theme_sun).mutate();moon=c.getDrawable(R.drawable.ic_theme_moon).mutate();
+        }
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);float half=getWidth()/2f;
+            paint.setColor(surface);float left=isChecked()?half:dp(4);
+            canvas.drawRoundRect(left,dp(4),isChecked()?getWidth()-dp(4):half,getHeight()-dp(4),dp(20),dp(20),paint);
+            drawGlyph(canvas,sun,half/2f,!isChecked());drawGlyph(canvas,moon,half+half/2f,isChecked());
+        }
+        private void drawGlyph(Canvas canvas,android.graphics.drawable.Drawable icon,float center,boolean active) {
+            int size=dp(20),left=Math.round(center-size/2f),top=(getHeight()-size)/2;
+            icon.setTint(active?accent:muted);icon.setBounds(left,top,left+size,top+size);icon.draw(canvas);
+        }
+        @Override public CharSequence getAccessibilityClassName(){return Switch.class.getName();}
     }
     static int appIcon(String pkg) {
         return switch(pkg){case "com.instagram.android"->R.drawable.ic_instagram;case "com.twitter.android"->R.drawable.ic_x;case "com.reddit.frontpage"->R.drawable.ic_reddit;default->R.drawable.ic_pause;};

@@ -12,19 +12,64 @@ public final class AppController {
     private final StateStore store;
     private final TimerNotifications notifications;
     private final ScheduleAlarms alarms;
+    private final MonitoringPermission monitoring;
+    private Object monitoringOwner;
+    private Runnable monitoringLost;
     public boolean connected;
     AppController(Context context) {
         store = new StateStore(context); engine = store.read();
         notifications = new TimerNotifications(context); alarms = new ScheduleAlarms(context);
+        monitoring = new MonitoringPermission(context);
+        monitoring.observe(this::reconcileMonitoring);
+        refresh();
     }
     public static AppController get(Context context) { return ((SocialPauseApp) context.getApplicationContext()).controller(); }
     public static long wall() { return System.currentTimeMillis(); }
     public static long elapsed() { return SystemClock.elapsedRealtime(); }
-    public void refresh() { engine.advance(wall(), elapsed()); publish(); }
-    public void focus(String pkg, boolean unlocked) { engine.focus(pkg, unlocked, wall(), elapsed()); publish(); }
+    public void refresh() { reconcileMonitoringState(); engine.advance(wall(), elapsed()); publish(); }
+    public void focus(String pkg, boolean unlocked) {
+        reconcileMonitoringState();
+        engine.focus(connected ? pkg : null, connected && unlocked, wall(), elapsed()); publish();
+    }
     public void notificationDismissed() { notifications.dismissed(engine.cycleId()); refresh(); }
-    public void start() { notifications.newRun(); engine.start(wall(), elapsed()); publish(); }
+    public void start() { requireMonitoring(); notifications.newRun(); engine.start(wall(), elapsed()); publish(); }
     public void stop() { engine.stop(wall(), elapsed()); publish(); }
+    public void startManualLunch() { requireRunningMonitoring(); engine.startManualLunch(wall(), elapsed()); publish(); }
+    public void stopLunch() { requireRunningMonitoring(); engine.stopLunch(wall(), elapsed()); publish(); }
+
+    /** Call on resume as well as from permission callbacks; never infer revocation from binding alone. */
+    public void reconcileMonitoring() { if (reconcileMonitoringState()) publish(); }
+    private boolean reconcileMonitoringState() {
+        if (monitoring.enabled()) return false;
+        boolean changed = connected || engine.running || monitoringOwner != null;
+        Runnable cleanup = monitoringLost;
+        connected = false; monitoringOwner = null; monitoringLost = null;
+        if (engine.running) engine.stop(wall(), elapsed());
+        if (cleanup != null) cleanup.run();
+        return changed;
+    }
+    private void requireMonitoring() {
+        reconcileMonitoring();
+        if (!connected) throw new IllegalStateException("Enable App monitoring and wait for it to connect before starting.");
+    }
+    private void requireRunningMonitoring() {
+        requireMonitoring();
+        if (!engine.running) throw new IllegalStateException("Start tracking before using Lunch Break.");
+    }
+    boolean monitoringConnected(Object owner, Runnable cleanup) {
+        reconcileMonitoringState();
+        if (!monitoring.enabled()) { cleanup.run(); publish(); return false; }
+        Runnable previousCleanup = monitoringOwner != owner ? monitoringLost : null;
+        monitoringOwner = owner; monitoringLost = cleanup; connected = true;
+        if (previousCleanup != null) previousCleanup.run();
+        engine.focus(null, false, wall(), elapsed()); publish(); return true;
+    }
+    void monitoringDisconnected(Object owner) {
+        if (monitoringOwner != owner) return;
+        monitoringOwner = null; monitoringLost = null; connected = false;
+        engine.focus(null, false, wall(), elapsed());
+        reconcileMonitoringState(); publish();
+    }
     private void publish() {
         store.save(engine); notifications.update(engine, connected);
         alarms.schedule(engine.running ? engine.nextBoundary(wall(), elapsed()) : 0);

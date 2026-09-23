@@ -7,4 +7,16 @@
     <item quantity="other">%d apps available</item>
   </plurals>
   <string name="no_usage">No tracked usage for this period.</string>
+  <string name="select_at_least_one_app">Select at least one app.</string>
+  <string name="dark_mode">Dark mode</string>
+  <string name="individual_mode">Individual</string>
+  <string name="shared_mode">Shared</string>
+  <string name="timer_mode">Timer mode</string>
+  <string name="no_allowance">No allowance</string>
+  <string name="hour">Hour</string>
+  <string name="minute">Minute</string>
+  <string name="am_pm">AM / PM</string>
+  <string name="cancel">Cancel</string>
+  <string name="save">Save</string>
+  <string name="done">Done</string>
 </resources>

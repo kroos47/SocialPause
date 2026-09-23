@@ -10,7 +10,7 @@ The repository should contain source, build configuration, the Gradle wrapper, t
 - `artifacts/`: installable debug APKs, source archives, screenshots, logs and reports. Review any file separately before attaching it to a GitHub release; ignored files can still be uploaded manually.
 - Environment/credential files and private keys: never commit live values. Git ignore rules cover common names and extensions, but cannot recognize every possible secret filename.
 
-`gradle.properties` is safe to track while it contains only the current JVM/Android settings. Keep repository credentials out of it. The synthetic `engine/src/test/resources/legacy-v02.bin` contains no real usage data and is required by migration tests. The Gradle wrapper JAR is required to build from a clone.
+`gradle.properties` is safe to track while it contains only the current JVM/Android settings. Keep repository credentials out of it. The synthetic `engine/src/test/resources/legacy-v02.bin` and `legacy-v04-*.bin` fixtures contain no real usage data and are required by migration tests. The Gradle wrapper JAR is required to build from a clone.
 
 ## Review before committing
 

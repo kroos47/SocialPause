@@ -1,0 +1,6 @@
+<!-- Exact icon path from the supplied SocialPause V2.1 design tokens. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M14 3 C0 1 1 24 17 20 C8 19 7 9 14 3" android:fillColor="@android:color/transparent"
+        android:strokeColor="#1E3932" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

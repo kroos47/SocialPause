@@ -107,10 +107,10 @@ Use the Home, Insights and Settings bottom tabs. Insights starts empty on a new 
 
 Limit reached screens return to phone Home immediately and show a short explanation, then dismiss after five seconds. Verify they disappear on locking the phone and that reopening a depleted app is still blocked.
 
-## Version 0.3.0 checks
+## Version 0.6.0 checks
 
 Use the project timing suite for this release; `artifacts/design-tests.zip` belongs to the old 0.2 redesign and is obsolete for current timer rules. Current tests include the legacy fixture in `engine/src/test/resources/`.
 
 After building, copy `app/build/outputs/apk/debug/app-debug.apk` to `artifacts/SocialPause.apk` if you need a named personal-install APK. No publishing or Play account is needed. The supplied verification script reuses `.tools/android-user/debug.keystore`; use the same signing identity for future installs. If a signing mismatch occurs, preserve your existing installation and locate the original key rather than uninstalling automatically.
 
-On upgrade, old timers reset once; history and schedules remain. Check Instagram shows 07:00, X/Reddit 10:00, and lunch still blocks access during its scheduled cooldown. Then follow `DEVICE_TESTS.md`.
+Updating from 0.3/0.4/0.5 preserves timers, history and schedules. Stop monitoring before changing Individual / Shared mode or app allowances; the 00:01–00:30 shared slider also requires Shared mode. An active older shared cycle above 30 minutes keeps its existing budget until reset. Verify the theme switch, allowance sliders, Lunch wheels and Save/Cancel, app selection and automatic Stop after Accessibility revocation using `DEVICE_TESTS.md`. Only upgrades from the legacy 0.2 rules reset app allowances once.

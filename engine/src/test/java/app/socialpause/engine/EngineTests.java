@@ -51,7 +51,7 @@ public final class EngineTests {
         test("unused lunch still requires blocked hour",()->{Clock c=new Clock();c.lunch();c.minutes(300);eq(Mode.LUNCH_COOLDOWN,c.mode());for(String pkg:c.e.selected){eq(true,c.blocked(pkg));eq(COOLDOWN,c.cooldown(pkg));}c.minutes(60);eq(Mode.READY,c.mode());eq(INSTAGRAM_LIMIT,c.e.remaining(I));});
         test("lunch usage is unrestricted and excluded from history",()->{Clock c=new Clock();c.lunch();c.minutes(240);c.focus(I);c.minutes(60);eq(0L,c.e.used(I));eq(0L,c.e.history().total(LocalDate.of(2026,9,16),LocalDate.of(2026,9,16)));eq(true,c.blocked(X));});
         test("start respects active post-lunch block",()->{Clock c=new Clock();c.lunch();c.minutes(300);c.e.stop(c.wall,c.elapsed);eq(false,c.blocked(I));c.e.start(c.wall,c.elapsed);eq(true,c.blocked(I));eq(COOLDOWN,c.cooldown(I));});
-        test("lunch edits wait until tomorrow",()->{Clock c=new Clock();c.lunch();c.e.lunch(false,840,c.wall,c.elapsed);c.minutes(300);eq(true,c.blocked(X));c.minutes(60);c.minutes(8*60);eq(false,c.e.lunchEnabled);eq(0L,c.e.pendingAt());});
+        test("future lunch can be disabled today before its start",()->{Clock c=new Clock();c.lunch();c.e.lunch(false,840,c.wall,c.elapsed);eq(false,c.e.lunchEnabled);eq(0L,c.e.pendingAt());c.minutes(300);eq(false,c.blocked(X));});
         test("overnight lunch completes before schedule edit",()->{Clock c=new Clock();c.e.lunchMinute=1410;c.lunch();c.minutes(810);eq(Mode.LUNCH,c.mode());c.e.lunch(false,840,c.wall,c.elapsed);c.minutes(60);eq(Mode.LUNCH_COOLDOWN,c.mode());c.minutes(60);eq(Mode.READY,c.mode());eq(false,c.e.lunchEnabled);});
         test("sleep hides notification and cooldown continues",()->{Clock c=new Clock();c.e.sleep(true,1320,600);c.minutes(713);c.focus(I);c.minutes(7);eq(true,c.e.quiet(c.wall));eq(TimerPresentation.Kind.HIDDEN,c.notification().kind);c.minutes(60);eq(false,c.blocked(I));});
         test("sleep does not disable usage limits",()->{Clock c=new Clock();c.e.sleep(true,1320,600);c.minutes(720);c.focus(X);c.minutes(10);eq(true,c.blocked(X));eq(COOLDOWN,c.cooldown(X));});
@@ -171,6 +171,8 @@ public final class EngineTests {
         test("chip text stays compact across locales and schedule modes",()->{
             Locale saved=Locale.getDefault();try{Locale.setDefault(Locale.forLanguageTag("ar"));Clock c=new Clock();c.focus(I);eq("07:00",c.notification().shortCriticalText());c.e.sleep(true,0,1439);eq("",c.notification().shortCriticalText());c.e.sleepEnabled=false;c.lunch();c.minutes(240);eq("",c.notification().shortCriticalText());c.minutes(60);eq("",c.notification().shortCriticalText());}finally{Locale.setDefault(saved);}
         });
+        V05Tests.run();
+        V06Tests.run();
         System.out.println(tests+" scenarios passed.");
     }
 }

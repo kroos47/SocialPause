@@ -28,7 +28,7 @@ These Java files are under `app/src/main/java/app/socialpause/`.
 |---|---|
 | `SocialPauseApp.java` | Android Application entry point; creates one shared controller per process. |
 | `MainActivity.java` | Home, Insights and Settings navigation, Start/Stop, app picker, schedule dialogs, permission setup, and system-bar insets. Native screen Views are constructed here. Notification layouts use XML. |
-| `AppController.java` | Coordinates the engine, persistence, notification refresh, and alarm scheduling on the main thread. Also provides labels/time formatting. |
+| `AppController.java` | Coordinates the engine, persistence, notification refresh, and alarm scheduling on the main thread. Also reconciles monitoring permission, guards Start/lunch operations, and provides labels/time formatting. |
 | `StateStore.java` | Serializes private timing state into app-local SharedPreferences. Uses boot count to distinguish reboot from process recreation. Format changes need migration or explicit reset. |
 | `SocialAccessibilityService.java` | Determines focused package identity, checks lock state, updates usage, and sends blocked apps to Home. A recurring callback observes limits while an app stays open. |
 | `TimerNotifications.java` | Silent ongoing notification, remaining allowances, active-only countdown chronometer, custom overview rows, sleep hiding, and best-effort promoted-notification request. |
@@ -64,7 +64,7 @@ Other Android files:
 | File | Responsibility |
 |---|---|
 | `engine/src/main/java/app/socialpause/engine/RulesEngine.java` | Platform-independent state machine: independent per-app allowances and cooldowns, pauses, lunch, Sleep Time, schedule edits, and versioned restore/migration. |
-| `engine/src/test/java/app/socialpause/engine/EngineTests.java` | Behavioral scenarios, including a real v0.2 upgrade fixture and 5,000 transitions checked against an independent timer model. Uses a fake clock and no JUnit dependency. |
+| `engine/src/test/java/app/socialpause/engine/EngineTests.java` | Scenario entry point, including real legacy upgrade fixtures and the V05/V06 suites: 129 scenarios and 20,000 transitions checked against independent models. Uses a fake clock and no JUnit dependency. |
 | `scripts/test-engine.sh` | Compiles/runs the engine tests directly with javac/java when Android tools are unnecessary. |
 | `scripts/verify.sh` | Runs the checked-in wrapper for engine checks, debug APK assembly, and lint using project-local caches/signing state. |
 
@@ -114,3 +114,20 @@ Editing a generated APK or compiled class does not change the source. Make chang
 - `engine/src/main/java/app/socialpause/engine/FocusResolver.java`: testable focus memory for notification/Quick Settings panels, real app switches, keyboard, Recents, screen lock and monitoring reset.
 - `app/src/main/res/layout/notification_overview.xml`: expanded overview container.
 - `app/src/main/res/layout/notification_timer_row.xml`: per-app glyph, usage/cooldown timer and progress bar. These layouts are used only for ordinary overview notifications; Android live promotion requires standard templates.
+
+## Added in 0.5
+
+- `app/src/main/java/app/socialpause/MonitoringPermission.java`: observes whether this exact Accessibility service is enabled, independently of whether it is temporarily bound. Revocation stops monitoring through the controller.
+- `engine/src/test/java/app/socialpause/engine/V05Tests.java`: shared budgets/cooldowns, manual lunch and schedule changes, persistent daily eligibility, and upgrade scenarios. Invoked by the existing engine test runner.
+- `engine/src/test/fixtures/v04/`: generator and provenance for synthetic state captured using the original 0.4 engine. The three `legacy-v04-*.bin` resources validate migration without resetting old timers.
+
+`RulesEngine` now owns manual lunch phases and optional shared accounting. `MainActivity` displays the mode selector, shared allowance slider and Lunch card; `TimerPresentation` supplies the app/shared limiting countdown. No timing decisions belong in the UI.
+
+
+## Changed in 0.6
+
+- `MainActivity.java`: sun/moon control, segmented mode selector, per-app sliders, shared bottom sheet and Lunch wheel editor; retained app picker and permission/setup rows.
+- `Appearance.java` and `Design.java`: app-wide saved appearance and matching screen/overlay colors, separate from timer state.
+- `RulesEngine.java`: persisted app allowance settings, zero blocking and separate configured/current shared budget for compatible upgrades. Independent app cooldowns still apply in both modes.
+- `TimerPresentation.java`, `TimerNotifications.java`, `BlockOverlay.java`: zero-safe progress, honest No allowance wording, and actual cooldown deadlines.
+- New v0.5 serialized fixtures and engine scenarios cover the upgrade from active shared cycles, zero settings and the narrower next-cycle shared range. Fixtures contain synthetic data only.

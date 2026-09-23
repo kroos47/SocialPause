@@ -1,6 +1,6 @@
-# SocialPause 0.4.2
+# SocialPause 0.6.0
 
-Personal, offline Android app for the Galaxy S24 Ultra / Android 16. Instagram gets **7 focused minutes**, and other selected apps get **10 focused minutes each**. Exhausting an allowance immediately starts that app's **60-minute cooldown**. There is no shared 20-minute limit.
+Personal, offline Android app for the Galaxy S24 Ultra / Android 16. Instagram defaults to **7 focused minutes**, and other selected apps to **10 each**. Set per-app limits while stopped: Instagram **0–7 minutes**, other apps **0–12**. Zero blocks usage without a cooldown. Exhausting an allowance immediately starts that app's **60-minute cooldown**. Optional **Shared timer** adds a combined allowance, defaulting to 20 minutes.
 
 ## Build and install
 
@@ -12,15 +12,19 @@ The raw debug APK is `app/build/outputs/apk/debug/app-debug.apk`; the delivered 
 
 - Leaving an app, switching apps, or locking the screen pauses usage. Unused minutes stay available. Opening the notification drawer or Quick Settings over an app keeps its timer running; opening the Settings app pauses it.
 - Each app's cooldown runs continuously and resets only that app. For example, Instagram exhausted at 09:07 unlocks at 10:07 even if no other app is used.
+- Choose Individual or Shared on Home while stopped. In Shared mode, set its allowance in Settings from 1 to 30 minutes in one-minute steps. The bottom-sheet slider saves immediately; Done closes it. App cooldown completion never refills shared time; shared exhaustion blocks all selected apps for 60 minutes, then restores all allowances.
 - Home shows availability plus each app's remaining usage/cooldown. Blocked launches return to phone Home with a brief explanation.
-- Lunch defaults to 14:00–15:00 unrestricted, resets all timers, then blocks all selected apps until 16:00. Lunch changes apply tomorrow; overnight windows complete first.
+- Lunch defaults to 14:00–15:00 unrestricted, resets all timers, then blocks all selected apps until 16:00. Start manual lunch from the Home Lunch card once per local day, even during a cooldown. It replaces the upcoming automatic lunch, or grants an extra lunch if scheduled lunch already happened. Stop lunch starts a full blocked hour immediately.
+- Lunch schedule edits apply today only before today’s old start, before any lunch has happened, and when the new time is still future; otherwise tomorrow. The hour/minute/AM–PM wheel picker saves only when Save is pressed; Cancel, Back and outside taps discard it. Overnight phases finish without truncation.
 - Sleep Time defaults to 22:00–10:00 and hides timer notifications without disabling enforcement.
-- Stop intentionally allows free use and hides notifications. Start refreshes allowances while honoring the current lunch restrictions. Closing the dashboard does not stop monitoring.
-- Reboot may reset timers. Process recreation preserves allowances and cooldown deadlines. Updating from 0.3 preserves current timers. Upgrading from 0.2 resets timers once while preserving history, settings, selection and running status.
+- Stop intentionally allows free use and hides notifications. Start refreshes allowances while honoring the current lunch restrictions. Closing the dashboard does not stop monitoring. Revoking SocialPause Accessibility does stop it automatically; re-enable access and press Start to resume.
+- Reboot may reset timers. Process recreation preserves allowances and cooldown deadlines. Updating from 0.3/0.4/0.5 preserves current timers and history. An active older shared budget above 30 minutes finishes unchanged; the saved next-cycle budget is capped at 30. Daily manual lunch eligibility and lunch phases survive reboot. Upgrading from 0.2 resets timers once while preserving history, settings, selection and running status.
+
+Use the sun/moon control below Start/Stop to choose a persistent light or dark appearance without changing timer state. Selected apps and permission/setup controls remain in Settings below the timer sections.
 
 ## Notifications and Insights
 
-One silent ongoing notification shows the focused app's countdown. On Home or an unselected app, its expanded view lists every selected app's remaining usage or cooldown. Only active usage requests an app-icon/countdown status chip. Otherwise the status bar uses the SocialPause icon with no timer chip, and the expanded notification shows independent usage/cooldown rows and progress bars. Visible rows refresh while the screen is on; the phone is not woken every second for display updates.
+One silent ongoing notification shows the focused app's countdown, limited by shared remaining time when enabled. The limiting allowance is identified in the notification, and the idle overview includes shared remaining time. On Home or an unselected app, its expanded view lists every selected app's remaining usage or cooldown. Only active usage requests a status chip: app icon/countdown normally, or SocialPause icon/countdown when the shared allowance is smaller. Otherwise the status bar uses the SocialPause icon with no timer chip, and the expanded notification shows independent usage/cooldown rows and progress bars. Visible rows refresh while the screen is on; the phone is not woken every second for display updates.
 
 Dismissal restores the ordinary notification while monitoring is active. Live promotion is suppressed after dismissal until manual Start. Android controls dismissal and Samsung controls live-chip presentation, so neither a permanently unremovable notification nor promotion is guaranteed. Permission denial, Stop, disconnection and Sleep Time hide the timer surface.
 
@@ -35,8 +39,8 @@ Today Insights shows per-app usage only. This week shows stacked daily bars with
 - [Codex guide](docs/CODEX_GUIDE.md): how to ask for changes and review agent work.
 - [Publishing safely](docs/PUBLISHING.md): files to commit, local-only files, and secret checks.
 
-The dependency-free engine suite runs through Gradle `:engine:checkRules` or `scripts/test-engine.sh`. It includes independent timer, schedule, history and notification-presentation scenarios, a real v0.2 serialization fixture, and 5,000 randomized transitions compared with an independent model.
+The dependency-free engine suite runs through Gradle `:engine:checkRules` or `scripts/test-engine.sh`. It includes independent timer, schedule, history and notification-presentation scenarios, genuine v0.2/v0.4/v0.5 serialization fixtures, and 20,000 randomized reference-model transitions.
 
 Normal Android apps are bypassable through force-stop, uninstall or disabling Accessibility. Accessibility can redirect Home, not force-stop another process or stop background audio. Samsung battery behavior, live notifications and multi-window require phone acceptance. No INTERNET permission, account, analytics or external service is used.
 
-0.4.2 removes the temporary Status-bar countdown diagnostic from Settings and its unused sampling code. The working notification countdown and compatibility handling remain. On the user's Galaxy S24 Ultra, enabling **Phone Settings → Developer options → Live notifications for all apps** made the status-bar countdown work. Keep that phone setting enabled. This update preserves existing timers and history.
+Keep **Phone Settings → Developer options → Live notifications for all apps** enabled on the tested Samsung; this made the live countdown visible. The temporary in-app diagnostic remains removed.

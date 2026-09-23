@@ -6,7 +6,8 @@ import android.content.*;
 final class ScheduleAlarms {
     private final AlarmManager manager;
     private final PendingIntent intent;
-    private long scheduled;
+    // Unknown until this instance has touched AlarmManager: an older process may have left an alarm.
+    private long scheduled = -1;
     private boolean exact;
     ScheduleAlarms(Context c) {
         manager = c.getSystemService(AlarmManager.class);
