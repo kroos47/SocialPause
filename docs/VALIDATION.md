@@ -48,3 +48,12 @@ No Android application or timing-engine source changed in this preparation.
 - GitHub-hosted execution and release publication are **pending**. The user chose to finish local preparation and sign in to GitHub CLI later. Local/static checks do not claim that the Ubuntu CI jobs have run. The workflow is configured to test both JDK 17 and 21 once pushed.
 
 `scripts/package-release.py` records its own final verification log under ignored `artifacts/releases/v0.6.0/`, verifies APK identity and the original signing certificate, and packages four reviewed release assets. Publishing instructions are in PUBLISHING.md. No emulator or ADB server was started for this CI/release work.
+
+
+## GitHub SDK setup correction — 2026-09-25
+
+The first GitHub Android job failed before compilation: `sdkmanager: command not found` (exit 127). The original workflow assumed the runner exposed that tool on PATH. Static workflow validation cannot verify installed tools on a hosted runner.
+
+The workflow now uses a commit-pinned `android-actions/setup-android` step to bootstrap command-line tools, accept SDK licenses, install platform 36 / Build-Tools 36.0.0, and export the SDK paths. The command-line tools build is explicitly pinned to 15859902. Timing-engine and Android app source are unchanged.
+
+The corrected workflow passes actionlint. The release signing fingerprint was compared directly with the prepared APK's public certificate and matches; no private signing files are tracked. Final local build/signature/checksum results are recorded by `scripts/package-release.py` in `artifacts/releases/v0.6.0/build.log` and `BUILD-INFO.txt`. The corrected GitHub-hosted run still requires pushing this fix; a rerun of the old commit would use the old workflow.

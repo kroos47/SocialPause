@@ -47,7 +47,7 @@ This checklist concerns accidental publication of local information. It is not a
 `.github/workflows/ci.yml` runs on pushes to `main`, `v*` tags, pull requests targeting `main`, and manual runs from Actions.
 
 1. The timing jobs compile with Java 17 source compatibility and run the complete scenario/reference-model suite on JDK 17 and 21. The console logs are uploaded even when a test fails.
-2. Once both timing jobs pass, the Android job installs SDK 36 and Build-Tools 36.0.0, validates the Gradle wrapper, builds the debug APK, and runs Android lint on JDK 21.
+2. Once both timing jobs pass, the Android job validates the Gradle wrapper and explicitly sets up Android command-line tools, SDK 36 and Build-Tools 36.0.0, then builds the debug APK and runs Android lint on JDK 21. It does not rely on `sdkmanager` already being on the runner PATH.
 3. Build/lint reports are retained for 14 days; the disposable CI APK is retained for 7 days. A tag build fails if its name does not match `versionName`.
 
 Actions are pinned to full verified commit SHAs. Tokens have read-only repository permission; pull requests receive no signing material. Only pushes to `main` write the Gradle cache. Updating action versions is a reviewed workflow change.
@@ -56,7 +56,7 @@ The `SocialPause-ci.apk` artifact uses a newly generated runner debug key. It is
 
 ## Prepare a release locally
 
-The GitHub release uses the existing personal debug signing identity, not a newly generated Play Store/release key. Its public certificate fingerprint is checked against `.github/release-signing.sha256`. Keep the corresponding `.tools/android-user/debug.keystore` backed up privately. Do not edit the fingerprint to bypass a signing mismatch.
+The GitHub release uses the existing personal debug signing identity, not a newly generated Play Store/release key. Its public certificate fingerprint is checked against `.github/release-signing.sha256`. Keep the corresponding `.tools/android-user/debug.keystore` backed up privately. Do not edit the fingerprint to bypass a signing mismatch. The fingerprint is a hash of the public signing certificate, which is already included in a signed APK. It cannot sign an app or reveal the private key and is safe to commit; the keystore and its credentials stay private.
 
 From the repository root:
 
