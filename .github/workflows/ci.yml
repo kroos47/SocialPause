@@ -1,0 +1,112 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  engine:
+    name: Timing tests / Java ${{ matrix.java }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Run all timing and migration scenarios
+        run: sh scripts/test-engine.sh | tee engine-tests.log
+      - name: Upload timing-test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: timing-tests-java-${{ matrix.java }}
+          path: engine-tests.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  android:
+    name: Android APK and lint
+    needs: engine
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GRADLE_USER_HOME: ${{ github.workspace }}/.tools/gradle-cache
+      ANDROID_USER_HOME: ${{ github.workspace }}/.tools/android-user
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Validate Gradle wrapper and configure cache
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+      - name: Install the pinned Android SDK
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Verify tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          source = Path('app/build.gradle.kts').read_text()
+          version = re.search(r'versionName\s*=\s*"([^"]+)"', source).group(1)
+          if os.environ['RELEASE_TAG'] != 'v' + version:
+              raise SystemExit('Release tag does not match versionName in app/build.gradle.kts')
+          PY
+      - name: Build APK and run Android lint
+        run: sh ./gradlew --no-daemon :app:assembleDebug :app:lintDebug --console=plain | tee android-build.log
+      - name: Upload build and lint reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-reports
+          path: |
+            android-build.log
+            app/build/reports/lint-results-debug.*
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Label the disposable CI build
+        run: |
+          mkdir -p ci-apk
+          cp app/build/outputs/apk/debug/app-debug.apk ci-apk/SocialPause-ci.apk
+          cat > ci-apk/README.txt <<'EOF'
+          This APK is a test build signed with a temporary runner key.
+          It cannot update an installation signed with the original SocialPause key.
+          Keep your installed app and its data; use SocialPause.apk from GitHub Releases for updates.
+          EOF
+      - name: Upload test APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SocialPause-ci-${{ github.sha }}
+          path: ci-apk/
+          retention-days: 7
+          if-no-files-found: error

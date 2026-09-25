@@ -56,3 +56,7 @@
 - Keep the Gradle wrapper JAR and synthetic `legacy-v02.bin` / `legacy-v04-*.bin` / `legacy-v05-*.bin` test fixtures. Generated `engine/bin` class files are local output, not source.
 - Use portable paths in committed documentation. Check both the current files and reachable history when auditing secrets; ignore rules do not remove prior commits.
 - Never rewrite published history or change Git author identity without a specific user request. Do not commit, push or force-add ignored files as part of a local audit.
+
+- `.github/workflows/ci.yml` runs timing scenarios on Java 17/21 and APK/lint checks on JDK 21. Keep actions pinned to verified commit SHAs, job permissions read-only, and PR builds free of signing credentials. Do not use `pull_request_target` to execute proposed code.
+- CI APKs use disposable runner keys and must remain labelled test builds. Official personal-release APKs use the existing private local key; `.github/release-signing.sha256` contains only its public certificate fingerprint. Never upload the key or silently change that fingerprint to get a release through.
+- `python3 scripts/package-release.py vX.Y.Z` requires a clean committed tree and the original key, runs full verification, checks the APK identity/certificate, and packages tracked source plus checksums under ignored `artifacts/releases/`. Publish only the four reviewed assets, after CI succeeds for that commit; never upload build logs, private keys or device captures as release assets. Keep version tags immutable.

@@ -8,6 +8,8 @@ Open the repository root (the folder containing `settings.gradle.kts`) in Androi
 
 The raw debug APK is `app/build/outputs/apk/debug/app-debug.apk`; the delivered copy is `artifacts/SocialPause.apk`. Publishing is unnecessary. Preserve the signing key to install updates without uninstalling and losing data.
 
+GitHub Actions runs the timing tests on Java 17 and 21, then builds the Android APK and runs lint on pushes to `main`, version tags and pull requests. See the repository's [Actions page](https://github.com/kroos47/SocialPause/actions/workflows/ci.yml) for logs and reports. CI's `SocialPause-ci.apk` uses a temporary key; install the matching-key `SocialPause.apk` from [Releases](https://github.com/kroos47/SocialPause/releases) for updates. The [publishing guide](docs/PUBLISHING.md) explains local release packaging and publication without uploading the private signing key.
+
 ## Behavior
 
 - Leaving an app, switching apps, or locking the screen pauses usage. Unused minutes stay available. Opening the notification drawer or Quick Settings over an app keeps its timer running; opening the Settings app pauses it.

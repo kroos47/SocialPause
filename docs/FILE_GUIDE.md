@@ -67,6 +67,10 @@ Other Android files:
 | `engine/src/test/java/app/socialpause/engine/EngineTests.java` | Scenario entry point, including real legacy upgrade fixtures and the V05/V06 suites: 129 scenarios and 20,000 transitions checked against independent models. Uses a fake clock and no JUnit dependency. |
 | `scripts/test-engine.sh` | Compiles/runs the engine tests directly with javac/java when Android tools are unnecessary. |
 | `scripts/verify.sh` | Runs the checked-in wrapper for engine checks, debug APK assembly, and lint using project-local caches/signing state. |
+| `.github/workflows/ci.yml` | GitHub Actions timing-test jobs on Java 17/21, followed by Android APK/lint checks, with downloadable logs and a disposable test APK. |
+| `scripts/package-release.py` | Builds from a clean commit, verifies the original APK signing certificate and version, and packages official local release assets and checksums. |
+| `.github/release-signing.sha256` | Public certificate fingerprint used to reject APKs signed with the wrong key; this is not the private signing key. |
+| `.github/release-notes/v0.6.0.md` | Reviewed text for the 0.6.0 GitHub release. Add a new notes file for each future version. |
 
 A focus event flows like this:
 

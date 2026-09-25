@@ -35,3 +35,16 @@ UI inspection used a temporary automation helper with `FLAG_DONT_SUPPRESS_ACCESS
 Open the main repository root in Android Studio. The old extracted `artifacts/SocialPauseBuild` folder is not the working project and has not been refreshed.
 
 Keep Samsung **Developer options → Live notifications for all apps** enabled as previously confirmed on the user's phone. Emulator success does not establish Samsung live-pill rendering, multi-window behavior, battery management or a full real-time cooldown. Follow DEVICE_TESTS.md for physical Galaxy S24 Ultra acceptance, including YouTube selection, theme/wheel appearance and upgrade behavior.
+
+
+## Release automation preparation — 2026-09-25
+
+No Android application or timing-engine source changed in this preparation.
+
+- `sh scripts/verify.sh` passed again on the local JDK 21: **129 scenarios**, **20,000 reference-model transitions**, successful APK assembly, and lint **0 errors / 1 existing warning**. The run finished in 7 seconds.
+- The GitHub workflow passed **actionlint 1.7.12** validation. Action commit hashes were resolved from the official action repositories, and the validator download was checked against its published SHA-256 checksum.
+- Five isolated packaging-guard checks rejected invalid tags, a version mismatch, a missing original key, an uncommitted tree, and an existing tag pointing to a different commit. The real repository's dirty-tree check also rejected packaging before commit.
+- Gitleaks found no leaks in the proposed workflow, release helper, notes and guides. The committed signing fingerprint is public certificate metadata; the private key remains ignored and local.
+- GitHub-hosted execution and release publication are **pending**. The user chose to finish local preparation and sign in to GitHub CLI later. Local/static checks do not claim that the Ubuntu CI jobs have run. The workflow is configured to test both JDK 17 and 21 once pushed.
+
+`scripts/package-release.py` records its own final verification log under ignored `artifacts/releases/v0.6.0/`, verifies APK identity and the original signing certificate, and packages four reviewed release assets. Publishing instructions are in PUBLISHING.md. No emulator or ADB server was started for this CI/release work.
