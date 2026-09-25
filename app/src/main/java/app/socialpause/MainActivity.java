@@ -116,11 +116,20 @@ public final class MainActivity extends Activity {
         identity.addView(text("SocialPause",28,d.ink,true));d.add(identity,text("A little social. A little more life.",14,d.muted,false),8);
         if(largeHeader){title.setOrientation(LinearLayout.VERTICAL);title.addView(identity,new LinearLayout.LayoutParams(-1,-2));}else d.weighted(title,identity);
         Button toggle=d.button(e().running?"Stop":"Start",false,()->change(()->{if(e().running)controller.stop();else controller.start();}));
-        toggle.setMinWidth(d.dp(86));toggle.setEnabled(e().running||controller.connected);toggle.setAlpha(toggle.isEnabled()?1f:.5f);
+        toggle.setMinWidth(d.dp(86));
         controls.addView(toggle,new LinearLayout.LayoutParams(controlWidth,-2));
         Design.ThemeSwitch appearance=d.new ThemeSwitch();appearance.setOnCheckedChangeListener((button,dark)->Appearance.setDark(this,dark));
         LinearLayout.LayoutParams appearanceSize=new LinearLayout.LayoutParams(controlWidth,d.dp(48));appearanceSize.topMargin=d.dp(8);controls.addView(appearance,appearanceSize);
         if(largeHeader){LinearLayout.LayoutParams controlsSize=new LinearLayout.LayoutParams(controlWidth,-2);controlsSize.gravity=Gravity.END;controlsSize.topMargin=d.dp(12);title.addView(controls,controlsSize);}else title.addView(controls);content.addView(title);
+        TextView stopHint=text("",13,d.muted,false);d.add(content,stopHint,12);
+        bind(()->{
+            long remaining=e().stopLockRemaining(AppController.elapsed());
+            boolean locked=e().running&&remaining>0;
+            toggle.setEnabled(e().running?e().canStop(AppController.elapsed()):controller.connected);
+            toggle.setAlpha(toggle.isEnabled()?1f:.45f);
+            toggle.setStateDescription(locked?"Locked for "+AppController.stopDuration(remaining):e().running?"Available":controller.connected?"Ready":"App monitoring required");
+            stopHint.setText(!e().running?"Starting locks Stop for 6 hours.":locked?"Stop available in "+AppController.stopDuration(remaining):"Stop is available. Monitoring continues until you stop it.");
+        });
         timerModeSelector();
         LinearLayout summary=d.card(d.mint,20),row=d.row(),words=d.column();
         row.addView(d.icon("clock",d.ink),new LinearLayout.LayoutParams(d.dp(24),d.dp(24)));words.setPadding(d.dp(16),0,0,0);
@@ -287,7 +296,10 @@ public final class MainActivity extends Activity {
         line("Limits stay active during Sleep Time.",12,d.muted,false,8);
         line("YOUR APPS",12,d.muted,true,28);
         StringJoiner selected=new StringJoiner(", ");for(String pkg:e().selected)selected.add(appLabel(pkg));settingRow("chart","Selected apps",selected.toString(),this::chooseApps);
-        line("Use Stop on Home when you need free access.",12,d.muted,false,12);
+        TextView stopAvailability=text("",12,d.muted,false);d.add(content,stopAvailability,12);
+        bind(()->stopAvailability.setText(e().running&&e().stopLockRemaining(AppController.elapsed())>0?
+                "Stop available in "+AppController.stopDuration(e().stopLockRemaining(AppController.elapsed()))+" on Home.":
+                e().running?"Use Stop on Home when you need free access.":"Starting locks Stop for 6 hours. Lunch controls remain available."));
         line("APP SETUP",12,d.muted,true,30);
         settingRow("settings","App monitoring",controller.connected?"Connected":"Required · tap to enable",this::accessibilityDialog);
         settingRow("clock","Timer notifications",getSystemService(NotificationManager.class).areNotificationsEnabled()?"Enabled · hidden during Sleep Time":"Off · tap to enable",()->{
@@ -297,7 +309,7 @@ public final class MainActivity extends Activity {
         settingRow("clock","Precise schedule alarms",getSystemService(AlarmManager.class).canScheduleExactAlarms()?"Allowed":"Optional · improves idle transitions",()->open(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName()))));
         settingRow("settings","Battery & app settings","Review if Samsung delays monitoring",()->open(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
         line("Samsung controls live notification availability and layout. A standard timer notification is restored after dismissal while monitoring runs. Android still controls notification visibility.",12,d.muted,false,20);
-        line("Offline and personal. Accessibility reads app identity, not screen text. Stop, uninstalling, force-stop, or disabling Accessibility can bypass limits. Blocking returns to phone Home; it cannot force-stop other apps or stop background audio.",12,d.muted,false,16);
+        line("Offline and personal. Accessibility reads app identity, not screen text. Stop is locked for 6 hours after Start. Android force-stop, reboot, uninstalling, or disabling Accessibility can still bypass limits. Blocking returns to phone Home; it cannot force-stop other apps or stop background audio.",12,d.muted,false,16);
     }
     private View settingRow(String icon,String title,String subtitle,Runnable action) {
         LinearLayout card=d.card(d.surface,18),row=d.row(),words=d.column();row.addView(d.icon(icon,d.ink),new LinearLayout.LayoutParams(d.dp(24),d.dp(24)));

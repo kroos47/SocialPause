@@ -27,9 +27,10 @@ These Java files are under `app/src/main/java/app/socialpause/`.
 | File | Responsibility |
 |---|---|
 | `SocialPauseApp.java` | Android Application entry point; creates one shared controller per process. |
-| `MainActivity.java` | Home, Insights and Settings navigation, Start/Stop, app picker, schedule dialogs, permission setup, and system-bar insets. Native screen Views are constructed here. Notification layouts use XML. |
-| `AppController.java` | Coordinates the engine, persistence, notification refresh, and alarm scheduling on the main thread. Also reconciles monitoring permission, guards Start/lunch operations, and provides labels/time formatting. |
-| `StateStore.java` | Serializes private timing state into app-local SharedPreferences. Uses boot count to distinguish reboot from process recreation. Format changes need migration or explicit reset. |
+| `MainActivity.java` | Home, Insights and Settings navigation, Start/Stop and its six-hour availability countdown, app picker, schedule dialogs, permission setup, and system-bar insets. Native screen Views are constructed here. Notification layouts use XML. |
+| `AppController.java` | Coordinates the engine, persistence, notification refresh, and alarm scheduling on the main thread. Also reconciles startup/monitoring permission, guards Start/Stop/lunch operations, and provides labels/time formatting. System stops remain separate from locked user Stop. |
+| `StartupRecovery.java` | Checks Android 15+ startup evidence for the current process before initial publishing; a confirmed Force stop leaves monitoring stopped, while missing or old evidence preserves state. |
+| `StateStore.java` | Serializes private timing state into app-local SharedPreferences. Uses boot count to distinguish reboot from process recreation so reboot leaves monitoring stopped without erasing history or lunch records. Format changes need compatibility migration. |
 | `SocialAccessibilityService.java` | Determines focused package identity, checks lock state, updates usage, and sends blocked apps to Home. A recurring callback observes limits while an app stays open. |
 | `TimerNotifications.java` | Silent ongoing notification, remaining allowances, active-only countdown chronometer, custom overview rows, sleep hiding, and best-effort promoted-notification request. |
 | `ScheduleAlarms.java` | Requests the next schedule boundary using AlarmManager; exact if permitted, otherwise best effort. |
@@ -51,8 +52,9 @@ Other Android files:
 |---|---|
 | `app/src/main/java/app/socialpause/Design.java` | Shared light/dark colors, cards, app glyph badges, progress bars, grid/stack chart drawing and accessible day targets. |
 | `app/src/main/java/app/socialpause/BlockOverlay.java` | Brief limit-reached explanation using an Accessibility overlay; returns Home immediately and dismisses after five seconds. |
-| `app/src/main/java/app/socialpause/NotificationDismissReceiver.java` | Restores the ordinary notification after dismissal and suppresses live promotion until manual Start. |
+| `app/src/main/java/app/socialpause/NotificationDismissReceiver.java` | Handles a dismissal using its original surface/run identity. Ordinary lunch/cooldown/idle dismissals do not suppress live promotion; an active live dismissal suppresses it until the next Start. |
 | `engine/src/main/java/app/socialpause/engine/UsageHistory.java` | Local hourly aggregates split at hour/day boundaries. Preserved independently of allowance resets. |
+| `engine/src/main/java/app/socialpause/engine/NotificationDismissalPolicy.java` | Platform-independent dismissal identity and policy: distinguish ordinary surfaces from live countdowns and reject stale monitoring-run callbacks. |
 | `engine/src/main/java/app/socialpause/engine/TimerPresentation.java` | Testable notification state: focused app, per-app overview, all cooling, lunch, post-lunch block, or hidden. |
 | `app/src/main/res/values/styles.xml` | Light system-bar and window appearance. |
 | `app/src/main/res/values-night/styles.xml` | Dark system-bar and window appearance. |
@@ -63,14 +65,17 @@ Other Android files:
 
 | File | Responsibility |
 |---|---|
-| `engine/src/main/java/app/socialpause/engine/RulesEngine.java` | Platform-independent state machine: independent per-app allowances and cooldowns, pauses, lunch, Sleep Time, schedule edits, and versioned restore/migration. |
-| `engine/src/test/java/app/socialpause/engine/EngineTests.java` | Scenario entry point, including real legacy upgrade fixtures and the V05/V06 suites: 129 scenarios and 20,000 transitions checked against independent models. Uses a fake clock and no JUnit dependency. |
+| `engine/src/main/java/app/socialpause/engine/RulesEngine.java` | Platform-independent state machine: independent per-app allowances and cooldowns, pauses, lunch, Sleep Time, schedule edits, six-hour guarded Stop, and versioned restore/migration. |
+| `engine/src/test/java/app/socialpause/engine/EngineTests.java` | Scenario entry point, including real legacy upgrade fixtures and version-specific suites, plus 20,000 transitions checked against independent models. Read the current run output and VALIDATION.md for the observed scenario count. Uses a fake clock and no JUnit dependency. |
+| `engine/src/main/java/app/socialpause/engine/ProcessStartEvidence.java` | Correlates system startup timestamps with this process; avoids treating a reused historical process ID as a new Force stop. |
+| `engine/src/test/java/app/socialpause/engine/StartupRecoveryTests.java` | Tests current, stale, missing and invalid startup evidence. |
+| `app/src/androidTest/java/app/socialpause/RuntimeChecks.java` | Explicitly opted-in, disposable-emulator-only notification/UI checks and synthetic recovery fixtures; excluded from the personal APK. |
 | `scripts/test-engine.sh` | Compiles/runs the engine tests directly with javac/java when Android tools are unnecessary. |
 | `scripts/verify.sh` | Runs the checked-in wrapper for engine checks, debug APK assembly, and lint using project-local caches/signing state. |
 | `.github/workflows/ci.yml` | GitHub Actions timing-test jobs on Java 17/21, followed by Android APK/lint checks, with downloadable logs and a disposable test APK. |
 | `scripts/package-release.py` | Builds from a clean commit, verifies the original APK signing certificate and version, and packages official local release assets and checksums. |
 | `.github/release-signing.sha256` | Public certificate fingerprint used to reject APKs signed with the wrong key; this is not the private signing key. |
-| `.github/release-notes/v0.6.0.md` | Reviewed text for the 0.6.0 GitHub release. Add a new notes file for each future version. |
+| `.github/release-notes/v0.7.0.md` | Release text for the lunch-notification fix and six-hour Stop lock. Older versions retain their own notes. |
 
 A focus event flows like this:
 
@@ -135,3 +140,11 @@ Editing a generated APK or compiled class does not change the source. Make chang
 - `RulesEngine.java`: persisted app allowance settings, zero blocking and separate configured/current shared budget for compatible upgrades. Independent app cooldowns still apply in both modes.
 - `TimerPresentation.java`, `TimerNotifications.java`, `BlockOverlay.java`: zero-safe progress, honest No allowance wording, and actual cooldown deadlines.
 - New v0.5 serialized fixtures and engine scenarios cover the upgrade from active shared cycles, zero settings and the narrower next-cycle shared range. Fixtures contain synthetic data only.
+
+
+## Changed in 0.7
+
+- `RulesEngine.java`: elapsed-time Stop lock, separate guarded user/system stop paths, and migration that preserves an old active run without adding a retrospective lock. Allowance/lunch resets cannot change the Stop deadline.
+- `MainActivity.java` and `AppController.java`: display and enforce Stop availability; ordinary recreation preserves state, while reboot, confirmed Force stop and permission removal wait for a new Start.
+- `TimerNotifications.java` and `NotificationDismissReceiver.java`: preserve notification origin so dismissing lunch/cooldown/idle does not suppress the next focused live countdown. Preserve the existing Samsung format and deliberate live-dismissal behavior.
+- `V07Tests.java` and `NotificationDismissalTests.java` under the engine test package cover the Stop-lock rules and dismissal policy. The Android device checklist covers restart distinctions and the complete lunch-to-focused-notification sequence. Build results and device observations belong in `VALIDATION.md`.

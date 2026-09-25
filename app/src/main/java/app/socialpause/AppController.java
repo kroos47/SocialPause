@@ -16,8 +16,14 @@ public final class AppController {
     private Object monitoringOwner;
     private Runnable monitoringLost;
     public boolean connected;
+    private final Context context;
+    private boolean startupReconciled;
+    private int startupChecks;
     AppController(Context context) {
+        this.context = context.getApplicationContext();
         store = new StateStore(context); engine = store.read();
+        // Reconcile the current process before any service callback or notification publication.
+        reconcileStartup();
         notifications = new TimerNotifications(context); alarms = new ScheduleAlarms(context);
         monitoring = new MonitoringPermission(context);
         monitoring.observe(this::reconcileMonitoring);
@@ -31,8 +37,15 @@ public final class AppController {
         reconcileMonitoringState();
         engine.focus(connected ? pkg : null, connected && unlocked, wall(), elapsed()); publish();
     }
-    public void notificationDismissed() { notifications.dismissed(engine.cycleId()); refresh(); }
-    public void start() { requireMonitoring(); notifications.newRun(); engine.start(wall(), elapsed()); publish(); }
+    public void notificationDismissed(long run, boolean liveRequested) {
+        if (!engine.running || run != engine.cycleId()) return;
+        notifications.dismissed(run, liveRequested); refresh();
+    }
+    public void start() {
+        requireMonitoring();
+        if (engine.running) return;
+        engine.start(wall(), elapsed()); startupReconciled = true; notifications.newRun(); publish();
+    }
     public void stop() { engine.stop(wall(), elapsed()); publish(); }
     public void startManualLunch() { requireRunningMonitoring(); engine.startManualLunch(wall(), elapsed()); publish(); }
     public void stopLunch() { requireRunningMonitoring(); engine.stopLunch(wall(), elapsed()); publish(); }
@@ -40,13 +53,24 @@ public final class AppController {
     /** Call on resume as well as from permission callbacks; never infer revocation from binding alone. */
     public void reconcileMonitoring() { if (reconcileMonitoringState()) publish(); }
     private boolean reconcileMonitoringState() {
-        if (monitoring.enabled()) return false;
+        boolean recovered = reconcileStartup();
+        if (monitoring.enabled()) return recovered;
         boolean changed = connected || engine.running || monitoringOwner != null;
         Runnable cleanup = monitoringLost;
         connected = false; monitoringOwner = null; monitoringLost = null;
-        if (engine.running) engine.stop(wall(), elapsed());
+        if (engine.running) engine.systemStop(wall(), elapsed());
         if (cleanup != null) cleanup.run();
-        return changed;
+        return changed || recovered;
+    }
+    private boolean reconcileStartup() {
+        if (startupReconciled) return false;
+        StartupRecovery.Result result = StartupRecovery.detect(context);
+        // The current startup record can be incomplete in Application.onCreate. Retry at
+        // subsequent activity/service callbacks, then preserve state if evidence stays absent.
+        if (result != StartupRecovery.Result.UNKNOWN || ++startupChecks >= 10) startupReconciled = true;
+        if (result != StartupRecovery.Result.FORCE_STOPPED) return false;
+        engine.systemStop(wall(), elapsed());
+        return true;
     }
     private void requireMonitoring() {
         reconcileMonitoring();
@@ -77,6 +101,10 @@ public final class AppController {
     public static String duration(long ms) {
         long seconds = (Math.max(0, ms) + 999) / 1000;
         return String.format(Locale.getDefault(), "%02d:%02d", seconds / 60, seconds % 60);
+    }
+    public static String stopDuration(long ms) {
+        long seconds = (Math.max(0, ms) + 999) / 1000;
+        return String.format(Locale.getDefault(), "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60);
     }
     public static String at(long wall) { return java.time.Instant.ofEpochMilli(wall).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("h:mm a")); }
     public static String time(int minute) { return String.format(Locale.getDefault(), "%02d:%02d", minute / 60, minute % 60); }

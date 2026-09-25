@@ -7,8 +7,9 @@ android {
         applicationId = "app.socialpause"
         minSdk = 33
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.6.0"
+        versionCode = 9
+        versionName = "0.7.0"
+        testInstrumentationRunner = "app.socialpause.RuntimeChecks"
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }

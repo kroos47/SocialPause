@@ -79,6 +79,10 @@ If Samsung disables Accessibility for a sideloaded app, inspect the app's **App 
 
 Return to Home and press **Start**. If Start remains disabled, the Accessibility service has not connected. SocialPause may need reopening after enabling it.
 
+Starting locks the main **Stop** button for six continuous hours. Home shows “Stop available in HH:MM:SS”; lunch, cooldowns and screen-off time count toward it. Stop becomes available at the deadline without ending monitoring automatically. Choose mode and allowances before starting. **Stop lunch** remains separate and immediately begins the lunch cooldown as before.
+
+Reopening SocialPause or removing it from Recents does not release the lock. Reboot or a confirmed Android Force stop leaves monitoring off until you press Start again, which begins a fresh six-hour lock. Current-process Force-stop detection is available on Android 15+; when reliable evidence is unavailable, saved state is preserved. Revoking Accessibility also stops monitoring and requires Start after access is restored. These system actions remain possible for a normal Android app.
+
 ## 7. Test and debug
 
 Follow [DEVICE_TESTS.md](DEVICE_TESTS.md). Use the physical Samsung to test Now Bar, multi-window, screen locking, and battery behavior; an emulator cannot establish One UI behavior.
@@ -107,10 +111,24 @@ Use the Home, Insights and Settings bottom tabs. Insights starts empty on a new 
 
 Limit reached screens return to phone Home immediately and show a short explanation, then dismiss after five seconds. Verify they disappear on locking the phone and that reopening a depleted app is still blocked.
 
-## Version 0.6.0 checks
+## Version 0.7.0 checks
 
 Use the project timing suite for this release; `artifacts/design-tests.zip` belongs to the old 0.2 redesign and is obsolete for current timer rules. Current tests include the legacy fixture in `engine/src/test/resources/`.
 
 After building, copy `app/build/outputs/apk/debug/app-debug.apk` to `artifacts/SocialPause.apk` if you need a named personal-install APK. No publishing or Play account is needed. The supplied verification script reuses `.tools/android-user/debug.keystore`; use the same signing identity for future installs. If a signing mismatch occurs, preserve your existing installation and locate the original key rather than uninstalling automatically.
 
-Updating from 0.3/0.4/0.5 preserves timers, history and schedules. Stop monitoring before changing Individual / Shared mode or app allowances; the 00:01–00:30 shared slider also requires Shared mode. An active older shared cycle above 30 minutes keeps its existing budget until reset. Verify the theme switch, allowance sliders, Lunch wheels and Save/Cancel, app selection and automatic Stop after Accessibility revocation using `DEVICE_TESTS.md`. Only upgrades from the legacy 0.2 rules reset app allowances once.
+Updating from 0.3/0.4/0.5/0.6 preserves timers, history and schedules. An already-running installation receives no retrospective Stop lock; the next Start begins six hours. Stop monitoring before changing Individual / Shared mode or app allowances; the 00:01–00:30 shared slider also requires Shared mode. An active older shared cycle above 30 minutes keeps its existing budget until reset. Verify the theme switch, allowance sliders, Lunch wheels and Save/Cancel, app selection and automatic Stop after Accessibility revocation using `DEVICE_TESTS.md`. Only upgrades from the legacy 0.2 rules reset app allowances once.
+
+For the notification regression, start manual lunch, dismiss its ordinary notification, let lunch and its following cooldown finish, then open a selected app. Its focused expanded timer and eligible live countdown must return. Repeat dismissing the cooldown notification, and repeat in both timer modes. Dismissing an actual focused live countdown deliberately suppresses promotion until the next Start; old ambiguous dismissal records are also retained until that Start. Keep Sleep Time off for this check and verify the Samsung live-notification setting above. An emulator can verify Android notification content and promotion requests, but only the phone can establish that One UI renders the countdown.
+
+Use fake-clock tests for the exact six-hour boundary and delayed callbacks; do not shorten the shipping duration to speed up acceptance. Record what was actually checked in `VALIDATION.md`, with Samsung checks separate from build/emulator results.
+
+## Optional emulator regression checks
+
+Use a disposable Android 16 emulator for the synthetic runtime suite. It replaces test state and refuses physical phones. Build both APKs with `sh scripts/verify.sh :app:assembleDebugAndroidTest`, install the app APK and `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`, then run:
+
+```sh
+adb -s emulator-5580 shell am instrument -w -e synthetic true app.socialpause.test/app.socialpause.RuntimeChecks
+```
+
+Replace the emulator serial with your disposable device's serial. This checks actual notification payloads and dismissal callbacks, the controller guard, the Home countdown, automatic Stop-button enablement, and lunch controls. The production six-hour and lunch constants are unchanged; test-only fixtures move deadlines near boundaries. Keep the test APK separate from the personal-install APK.

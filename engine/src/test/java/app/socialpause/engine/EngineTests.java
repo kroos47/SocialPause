@@ -12,7 +12,10 @@ public final class EngineTests {
     static class Clock {
         RulesEngine e=new RulesEngine();
         long wall=LocalDate.of(2026,9,16).atTime(10,0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),elapsed=1000;
-        Clock(){e.lunchEnabled=false;e.sleepEnabled=false;e.start(wall,elapsed);}
+        Clock(){this(true);}
+        Clock(boolean started){e.lunchEnabled=false;e.sleepEnabled=false;if(started)e.start(wall,elapsed);}
+        // Existing configuration/history scenarios stop through the real user guard after waiting.
+        void stopWhenUnlocked(){focus(null);millis(e.stopLockRemaining(elapsed));e.stop(wall,elapsed);}
         void focus(String pkg){e.focus(pkg,true,wall,elapsed);}
         void minutes(long n){millis(n*MINUTE);}
         void millis(long n){wall+=n;elapsed+=n;e.advance(wall,elapsed);}
@@ -44,13 +47,13 @@ public final class EngineTests {
         test("late callback anchors cooldown at actual exhaustion",()->{Clock c=new Clock();c.focus(I);c.minutes(12);eq(55*MINUTE,c.cooldown(I));eq(INSTAGRAM_LIMIT,c.e.used(I));});
         test("late callback never counts after cooldown expires",()->{Clock c=new Clock();c.focus(I);c.minutes(100);eq(false,c.blocked(I));eq(0L,c.e.used(I));eq(null,c.e.focused());eq(INSTAGRAM_LIMIT,c.e.history().total(LocalDate.of(2026,9,16),LocalDate.of(2026,9,16)));});
         test("earliest cooldown is an alarm boundary",()->{Clock c=new Clock();c.focus(I);c.minutes(7);c.focus(X);c.minutes(10);eq(c.wall+50*MINUTE,c.e.nextBoundary(c.wall,c.elapsed));});
-        test("stop grants unrestricted access",()->{Clock c=new Clock();c.focus(I);c.minutes(7);c.e.stop(c.wall,c.elapsed);eq(false,c.blocked(I));c.focus(X);c.minutes(5);eq(0L,c.e.used(X));eq(TimerPresentation.Kind.HIDDEN,c.notification().kind);});
-        test("start refreshes every allowance and changes run ID",()->{Clock c=new Clock();c.focus(I);c.minutes(7);long run=c.e.cycleId();c.e.stop(c.wall,c.elapsed);c.e.start(c.wall,c.elapsed);eq(run+1,c.e.cycleId());eq(INSTAGRAM_LIMIT,c.e.remaining(I));eq(0L,c.cooldown(I));});
+        test("unlocked Stop grants unrestricted access",()->{Clock c=new Clock();c.minutes(360);c.focus(I);c.minutes(7);c.e.stop(c.wall,c.elapsed);eq(false,c.blocked(I));c.focus(X);c.minutes(5);eq(0L,c.e.used(X));eq(TimerPresentation.Kind.HIDDEN,c.notification().kind);});
+        test("start refreshes every allowance and changes run ID",()->{Clock c=new Clock();c.minutes(360);c.focus(I);c.minutes(7);long run=c.e.cycleId();c.e.stop(c.wall,c.elapsed);c.e.start(c.wall,c.elapsed);eq(run+1,c.e.cycleId());eq(INSTAGRAM_LIMIT,c.e.remaining(I));eq(0L,c.cooldown(I));});
         test("cooldown completion preserves monitoring run ID",()->{Clock c=new Clock();long run=c.e.cycleId();c.focus(I);c.minutes(7);c.minutes(60);eq(run,c.e.cycleId());});
         test("lunch resets pending app cooldowns",()->{Clock c=new Clock();c.lunch();c.minutes(230);c.focus(I);c.minutes(7);eq(COOLDOWN,c.cooldown(I));c.minutes(3);eq(Mode.LUNCH,c.mode());eq(0L,c.cooldown(I));eq(0L,c.e.used(I));});
         test("unused lunch still requires blocked hour",()->{Clock c=new Clock();c.lunch();c.minutes(300);eq(Mode.LUNCH_COOLDOWN,c.mode());for(String pkg:c.e.selected){eq(true,c.blocked(pkg));eq(COOLDOWN,c.cooldown(pkg));}c.minutes(60);eq(Mode.READY,c.mode());eq(INSTAGRAM_LIMIT,c.e.remaining(I));});
         test("lunch usage is unrestricted and excluded from history",()->{Clock c=new Clock();c.lunch();c.minutes(240);c.focus(I);c.minutes(60);eq(0L,c.e.used(I));eq(0L,c.e.history().total(LocalDate.of(2026,9,16),LocalDate.of(2026,9,16)));eq(true,c.blocked(X));});
-        test("start respects active post-lunch block",()->{Clock c=new Clock();c.lunch();c.minutes(300);c.e.stop(c.wall,c.elapsed);eq(false,c.blocked(I));c.e.start(c.wall,c.elapsed);eq(true,c.blocked(I));eq(COOLDOWN,c.cooldown(I));});
+        test("Start after a system stop respects active post-lunch block",()->{Clock c=new Clock();c.lunch();c.minutes(300);c.e.systemStop(c.wall,c.elapsed);eq(false,c.blocked(I));c.e.start(c.wall,c.elapsed);eq(true,c.blocked(I));eq(COOLDOWN,c.cooldown(I));});
         test("future lunch can be disabled today before its start",()->{Clock c=new Clock();c.lunch();c.e.lunch(false,840,c.wall,c.elapsed);eq(false,c.e.lunchEnabled);eq(0L,c.e.pendingAt());c.minutes(300);eq(false,c.blocked(X));});
         test("overnight lunch completes before schedule edit",()->{Clock c=new Clock();c.e.lunchMinute=1410;c.lunch();c.minutes(810);eq(Mode.LUNCH,c.mode());c.e.lunch(false,840,c.wall,c.elapsed);c.minutes(60);eq(Mode.LUNCH_COOLDOWN,c.mode());c.minutes(60);eq(Mode.READY,c.mode());eq(false,c.e.lunchEnabled);});
         test("sleep hides notification and cooldown continues",()->{Clock c=new Clock();c.e.sleep(true,1320,600);c.minutes(713);c.focus(I);c.minutes(7);eq(true,c.e.quiet(c.wall));eq(TimerPresentation.Kind.HIDDEN,c.notification().kind);c.minutes(60);eq(false,c.blocked(I));});
@@ -82,8 +85,8 @@ public final class EngineTests {
         test("history splits at midnight",()->{UsageHistory h=new UsageHistory();ZoneId z=ZoneId.of("Asia/Kolkata");long w=LocalDate.of(2026,9,16).atTime(23,58).atZone(z).toInstant().toEpochMilli();h.record(I,w,5*MINUTE,z);eq(2*MINUTE,h.total(LocalDate.of(2026,9,16),LocalDate.of(2026,9,16)));eq(3*MINUTE,h.total(LocalDate.of(2026,9,17),LocalDate.of(2026,9,17)));});
         test("weekly app segments sum to selected-day and week totals",()->{UsageHistory h=new UsageHistory();ZoneId z=ZoneId.systemDefault();LocalDate mon=LocalDate.of(2026,9,14);for(int i=0;i<7;i++){long w=mon.plusDays(i).atTime(10,0).atZone(z).toInstant().toEpochMilli();h.record(I,w,(i+1)*MINUTE,z);h.record(X,w,2*MINUTE,z);}eq(42*MINUTE,h.total(mon,mon.plusDays(6)));eq(6*MINUTE,h.total(mon.plusDays(3),mon.plusDays(3)));eq(4*MINUTE,h.byApp(mon.plusDays(3),mon.plusDays(3)).get(I));eq(0L,h.total(mon.minusDays(1),mon.minusDays(1)));});
         test("history handles DST transitions",()->{UsageHistory h=new UsageHistory();ZoneId z=ZoneId.of("America/New_York");LocalDate day=LocalDate.of(2026,11,1);long w=day.atTime(0,30).atZone(z).toInstant().toEpochMilli();h.record(I,w,4*60*MINUTE,z);eq(4*60*MINUTE,h.total(day,day));eq(4*60*MINUTE,Arrays.stream(h.hours(day)).sum());});
-        test("unknown selected apps default to ten minutes",()->{Clock c=new Clock();c.e.stop(c.wall,c.elapsed);c.e.select(Set.of("other"));c.e.start(c.wall,c.elapsed);c.focus("other");c.minutes(10);eq(COOLDOWN,c.cooldown("other"));});
-        test("changing selected apps retains historical totals",()->{Clock c=new Clock();c.focus(I);c.minutes(2);c.e.stop(c.wall,c.elapsed);c.e.select(Set.of(X));eq(2*MINUTE,c.e.history().byApp(LocalDate.of(2026,9,16),LocalDate.of(2026,9,16)).get(I));});
+        test("unknown selected apps default to ten minutes",()->{Clock c=new Clock(false);c.e.select(Set.of("other"));c.e.start(c.wall,c.elapsed);c.focus("other");c.minutes(10);eq(COOLDOWN,c.cooldown("other"));});
+        test("changing selected apps retains historical totals",()->{Clock c=new Clock();c.focus(I);c.minutes(2);c.stopWhenUnlocked();c.e.select(Set.of(X));eq(2*MINUTE,c.e.history().byApp(LocalDate.of(2026,9,16),LocalDate.of(2026,9,16)).get(I));});
         test("configuration guards remain enforced",()->{Clock c=new Clock();boolean rejected=false;try{c.e.select(Set.of(X));}catch(IllegalStateException ex){rejected=true;}eq(true,rejected);rejected=false;try{c.e.sleep(true,1,1);}catch(IllegalArgumentException ex){rejected=true;}eq(true,rejected);});
         test("five thousand transitions match independent timer model",()->{
             Clock c=new Clock();Random random=new Random(308);String[] packages={I,X,R};long[] used=new long[3],deadlines=new long[3];long history=0;
@@ -142,7 +145,7 @@ public final class EngineTests {
         test("only an actively used app requests a timer chip",()->{
             Clock c=new Clock();eq(false,c.notification().activeChip());c.focus(X);eq(true,c.notification().activeChip());c.minutes(10);eq(false,c.notification().activeChip());
             c.focus(I);c.minutes(7);c.focus(R);c.minutes(10);eq(TimerPresentation.Kind.ALL_COOLDOWN,c.notification().kind);eq(false,c.notification().activeChip());
-            c.e.stop(c.wall,c.elapsed);eq(false,c.notification().activeChip());
+            c.stopWhenUnlocked();eq(false,c.notification().activeChip());
         });
         test("overview progress represents each independent allowance",()->{
             Clock c=new Clock();c.focus(X);c.minutes(5);c.focus(null);var rows=c.notification().rows;eq(0,rows.get(0).progress());eq(50,rows.get(1).progress());eq(0,rows.get(2).progress());
@@ -166,13 +169,15 @@ public final class EngineTests {
         });
         test("chip text follows selected app and clears when paused",()->{
             Clock c=new Clock();c.focus(I);eq("07:00",c.notification().shortCriticalText());c.minutes(2);eq("05:00",c.notification().shortCriticalText());c.focus(X);eq("10:00",c.notification().shortCriticalText());c.minutes(1);c.focus(null);eq("",c.notification().shortCriticalText());c.focus(I);eq("05:00",c.notification().shortCriticalText());
-            c.e.focus(I,false,c.wall,c.elapsed);eq("",c.notification().shortCriticalText());c.focus(I);c.e.stop(c.wall,c.elapsed);eq("",c.notification().shortCriticalText());
+            c.e.focus(I,false,c.wall,c.elapsed);eq("",c.notification().shortCriticalText());c.focus(I);c.stopWhenUnlocked();eq("",c.notification().shortCriticalText());
         });
         test("chip text stays compact across locales and schedule modes",()->{
             Locale saved=Locale.getDefault();try{Locale.setDefault(Locale.forLanguageTag("ar"));Clock c=new Clock();c.focus(I);eq("07:00",c.notification().shortCriticalText());c.e.sleep(true,0,1439);eq("",c.notification().shortCriticalText());c.e.sleepEnabled=false;c.lunch();c.minutes(240);eq("",c.notification().shortCriticalText());c.minutes(60);eq("",c.notification().shortCriticalText());}finally{Locale.setDefault(saved);}
         });
         V05Tests.run();
         V06Tests.run();
+        V07Tests.run();
+        NotificationDismissalTests.run();StartupRecoveryTests.run();
         System.out.println(tests+" scenarios passed.");
     }
 }

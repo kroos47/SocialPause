@@ -60,15 +60,15 @@ The GitHub release uses the existing personal debug signing identity, not a newl
 
 From the repository root:
 
-1. Update `versionName` and increment `versionCode` for an app update. Keep 0.6.0/code 8 for this first publication of the already shipped version.
+1. Update `versionName` and increment `versionCode` for an app update. This release is 0.7.0/code 9.
 2. Add reviewed notes at `.github/release-notes/vX.Y.Z.md`. Commit the source, workflows and notes; the packaging helper requires a clean tree.
 3. Use the same complete JDK and SDK as the Android Studio guide. Run:
 
 ```sh
-python3 scripts/package-release.py v0.6.0
+python3 scripts/package-release.py v0.7.0
 ```
 
-The helper runs `scripts/verify.sh` and rejects a missing original key, mismatched version/certificate, changed source during the build, or an existing tag pointing elsewhere. It packages into `artifacts/releases/v0.6.0/`:
+The helper runs `scripts/verify.sh` and rejects a missing original key, mismatched version/certificate, changed source during the build, or an existing tag pointing elsewhere. It packages into `artifacts/releases/v0.7.0/`:
 
 - `SocialPause.apk`: verified APK using the original signer.
 - `SocialPause-source.zip`: source from the exact Git commit, with no ignored local files.
@@ -78,7 +78,7 @@ The helper runs `scripts/verify.sh` and rejects a missing original key, mismatch
 `build.log` remains local for troubleshooting; it is not a release asset. Validate the checksums on macOS with:
 
 ```sh
-cd artifacts/releases/v0.6.0
+cd artifacts/releases/v0.7.0
 shasum -a 256 -c SHA256SUMS.txt
 ```
 
@@ -94,28 +94,28 @@ From the repository root, push the reviewed commit and wait for **Build and test
 
 ```sh
 git push origin main
-git tag -a v0.6.0 -m 'SocialPause 0.6.0'
-git push origin v0.6.0
-gh run list --workflow ci.yml --branch v0.6.0
+git tag -a v0.7.0 -m 'SocialPause 0.7.0'
+git push origin v0.7.0
+gh run list --workflow ci.yml --branch v0.7.0
 ```
 
 Use `gh run watch RUN_ID --exit-status` for the tag run shown above. After it passes, create a draft with only the four release assets:
 
 ```sh
-gh release create v0.6.0 --verify-tag --draft \
+gh release create v0.7.0 --verify-tag --draft \
   --repo kroos47/SocialPause \
-  --title 'SocialPause 0.6.0 — V2.1 design and flexible timers' \
-  --notes-file .github/release-notes/v0.6.0.md \
-  artifacts/releases/v0.6.0/SocialPause.apk \
-  artifacts/releases/v0.6.0/SocialPause-source.zip \
-  artifacts/releases/v0.6.0/BUILD-INFO.txt \
-  artifacts/releases/v0.6.0/SHA256SUMS.txt
+  --title 'SocialPause 0.7.0 — Lunch notification fix and six-hour Stop lock' \
+  --notes-file .github/release-notes/v0.7.0.md \
+  artifacts/releases/v0.7.0/SocialPause.apk \
+  artifacts/releases/v0.7.0/SocialPause-source.zip \
+  artifacts/releases/v0.7.0/BUILD-INFO.txt \
+  artifacts/releases/v0.7.0/SHA256SUMS.txt
 ```
 
 Review the draft's tag and assets, then publish:
 
 ```sh
-gh release edit v0.6.0 --repo kroos47/SocialPause --draft=false --latest
+gh release edit v0.7.0 --repo kroos47/SocialPause --draft=false --latest
 ```
 
 If a tag/release already exists, inspect it before proceeding. Do not force-update a published tag or overwrite released assets silently. For later versions substitute the new version consistently. GitHub provides its own source snapshots too; the attached ZIP and build information make the APK's exact source commit explicit.

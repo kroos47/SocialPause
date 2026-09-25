@@ -5,6 +5,7 @@ import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Icon;
+import android.net.Uri;
 import android.os.*;
 import android.widget.RemoteViews;
 import android.content.res.ColorStateList;
@@ -23,7 +24,13 @@ final class TimerNotifications {
         channel.setSound(null,null);channel.enableVibration(false);manager.createNotificationChannel(channel);
     }
     void newRun(){visibility.edit().remove("ordinary-run").remove("dismissed-cycle").apply();previous="";}
-    void dismissed(long run){visibility.edit().putLong("ordinary-run",run).apply();previous="";}
+    void dismissed(long run,boolean liveRequested){
+        // Restoring an ordinary lunch/cooldown/overview must not opt out of later live usage.
+        long previousRun=visibility.getLong("ordinary-run",NotificationDismissalPolicy.NO_RUN);
+        long suppressedRun=new NotificationDismissalPolicy.Dismissal(run,liveRequested).suppressedRunAfter(previousRun,run);
+        if(suppressedRun!=previousRun)visibility.edit().putLong("ordinary-run",suppressedRun).apply();
+        previous="";
+    }
     private RemoteViews overview(TimerPresentation p, String title, long wall) {
         Design d=new Design(context);RemoteViews view=new RemoteViews(context.getPackageName(),R.layout.notification_overview);
         view.setTextViewText(R.id.overview_title,title);view.removeAllViews(R.id.timer_rows);
@@ -79,13 +86,19 @@ final class TimerNotifications {
                 body=rows.toString().stripTrailing();
             }
         }
-        boolean ordinary=visibility.getLong("ordinary-run",-1)==e.cycleId();
+        long suppressedRun=visibility.getLong("ordinary-run",NotificationDismissalPolicy.NO_RUN);
+        boolean ordinary=suppressedRun==e.cycleId();
+        boolean liveRequested=NotificationDismissalPolicy.requestsLive(p,e.cycleId(),suppressedRun);
         String key=e.cycleId()+":"+p.kind+":"+p.app+":"+(awake?p.remaining/1000:p.remaining/60000)+":"+p.rows.stream().map(r->r.app()+":"+r.remaining()/1000+":"+r.cooling()+":"+r.noAllowance()).collect(java.util.stream.Collectors.toList())+":"+body+":"+ordinary+":"+awake+":"+d.dark;
         if(key.equals(previous))return;previous=key;
         int icon=p.kind==TimerPresentation.Kind.APP && !p.sharedLimiting?Design.appIcon(p.app):R.drawable.ic_pause;
         int timerColor=p.activeChip() && !p.sharedLimiting?d.appColor(p.app):d.accent;
         PendingIntent open=PendingIntent.getActivity(context,0,new Intent(context,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-        PendingIntent dismiss=PendingIntent.getBroadcast(context,10,new Intent(context,NotificationDismissReceiver.class).setAction(NotificationDismissReceiver.ACTION).putExtra("run",e.cycleId()),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+        // Run and original surface belong in immutable identity, never mutable extras. A delayed
+        // lunch dismissal must not be mistaken for the live notification replacing it.
+        var dismissal=new NotificationDismissalPolicy.Dismissal(e.cycleId(),liveRequested);
+        PendingIntent dismiss=PendingIntent.getBroadcast(context,10,new Intent(context,NotificationDismissReceiver.class)
+                .setAction(NotificationDismissReceiver.ACTION).setData(Uri.parse(dismissal.identity())),PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder b=new Notification.Builder(context,"timer").setSmallIcon(icon).setContentTitle(title)
                 .setContentText(body).setContentIntent(open).setDeleteIntent(dismiss).setOngoing(true).setOnlyAlertOnce(true)
                 .setColor(timerColor).setCategory(Notification.CATEGORY_PROGRESS);
@@ -102,13 +115,13 @@ final class TimerNotifications {
             // Explicit chip text takes precedence over the automatic chronometer fallback.
             b.setWhen(wall+p.remaining).setShowWhen(true).setUsesChronometer(true).setChronometerCountDown(true);
             if(Build.VERSION.SDK_INT>=36)b.setShortCriticalText(p.shortCriticalText());
-            if(!ordinary){Bundle extras=new Bundle();extras.putBoolean("android.requestPromotedOngoing",true);b.addExtras(extras);}
+            if(liveRequested){Bundle extras=new Bundle();extras.putBoolean("android.requestPromotedOngoing",true);b.addExtras(extras);}
         } else {
             b.setWhen(0).setShowWhen(false).setUsesChronometer(false);
             if(Build.VERSION.SDK_INT>=36)b.setShortCriticalText("");
         }
         Notification notification=b.build();
-        if(p.activeChip() && !ordinary && Build.VERSION.SDK_INT>=36 && !notification.hasPromotableCharacteristics()) {
+        if(liveRequested && Build.VERSION.SDK_INT>=36 && !notification.hasPromotableCharacteristics()) {
             // Initial Android 16 requires colorization; later releases require the opposite.
             // Ask this OS which public-API format it accepts, preserving the modern default.
             Notification legacy=Notification.Builder.recoverBuilder(context,notification.clone()).setColorized(true).build();

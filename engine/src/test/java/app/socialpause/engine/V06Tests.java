@@ -9,7 +9,7 @@ import static app.socialpause.engine.RulesEngine.*;
 /** Configurable allowances retain the v0.5 independent-cooldown and lunch contracts. */
 final class V06Tests {
     static Clock configured(TimerMode mode,long shared,long instagram,long x,long reddit) {
-        Clock c=new Clock();c.e.stop(c.wall,c.elapsed);c.e.setTimerMode(mode);
+        Clock c=new Clock(false);c.e.setTimerMode(mode);
         if(mode==TimerMode.SHARED)c.e.setSharedLimit(shared);
         c.e.setAppLimit(I,instagram);c.e.setAppLimit(X,x);c.e.setAppLimit(R,reddit);c.e.start(c.wall,c.elapsed);return c;
     }
@@ -22,10 +22,10 @@ final class V06Tests {
         test("app allowance defaults and independent maximums",()->{
             Clock c=new Clock();eq(7*MINUTE,c.e.limit(I));eq(10*MINUTE,c.e.limit(X));eq(10*MINUTE,c.e.limit("other"));
             eq(7*MINUTE,c.e.maximumLimit(I));eq(12*MINUTE,c.e.maximumLimit(X));eq(12*MINUTE,c.e.maximumLimit("other"));
-            c.e.stop(c.wall,c.elapsed);c.e.setAppLimit(I,0);c.e.setAppLimit(X,12*MINUTE);eq(0L,c.e.limit(I));eq(12*MINUTE,c.e.limit(X));
+            c.stopWhenUnlocked();c.e.setAppLimit(I,0);c.e.setAppLimit(X,12*MINUTE);eq(0L,c.e.limit(I));eq(12*MINUTE,c.e.limit(X));
         });
         test("app limits require stopped monitoring and whole-minute bounds",()->{
-            Clock c=new Clock();rejects(IllegalStateException.class,()->c.e.setAppLimit(I,MINUTE));c.e.stop(c.wall,c.elapsed);
+            Clock c=new Clock();rejects(IllegalStateException.class,()->c.e.setAppLimit(I,MINUTE));c.stopWhenUnlocked();
             for(long value:new long[]{-MINUTE,1,8*MINUTE})rejects(IllegalArgumentException.class,()->c.e.setAppLimit(I,value));
             for(long value:new long[]{-1,13*MINUTE,MINUTE+1})rejects(IllegalArgumentException.class,()->c.e.setAppLimit(X,value));
             rejects(IllegalArgumentException.class,()->c.e.setAppLimit("",MINUTE));
@@ -55,7 +55,7 @@ final class V06Tests {
             }
         });
         test("Stop and lunch remain unrestricted even for zero-allowance apps",()->{
-            Clock c=configured(TimerMode.SHARED,MINUTE,0,0,0);c.e.stop(c.wall,c.elapsed);eq(false,c.blocked(I));eq(TimerPresentation.Kind.HIDDEN,c.notification().kind);
+            Clock c=configured(TimerMode.SHARED,MINUTE,0,0,0);c.stopWhenUnlocked();eq(false,c.blocked(I));eq(TimerPresentation.Kind.HIDDEN,c.notification().kind);
             c.e.start(c.wall,c.elapsed);c.e.startManualLunch(c.wall,c.elapsed);eq(false,c.blocked(I));eq(3,c.e.availableCount(c.wall,c.elapsed));c.focus(I);c.minutes(60);
             eq(Mode.LUNCH_COOLDOWN,c.mode());eq(true,c.blocked(I));eq(0L,c.cooldown(I));c.minutes(60);eq(Mode.READY,c.mode());eq(true,c.blocked(I));eq(0L,total(c));
         });
@@ -96,23 +96,23 @@ final class V06Tests {
             eq(2*MINUTE,c.e.remaining(I));eq(2*MINUTE,c.e.limit(I));eq(12*MINUTE,c.e.limit(X));eq(0L,c.e.limit(R));eq(2*MINUTE,total(c));
         });
         test("settings survive mode changes selection and monitoring restarts",()->{
-            Clock c=configured(TimerMode.SHARED,13*MINUTE,2*MINUTE,12*MINUTE,0);c.focus(I);c.minutes(1);c.e.stop(c.wall,c.elapsed);
+            Clock c=configured(TimerMode.SHARED,13*MINUTE,2*MINUTE,12*MINUTE,0);c.focus(I);c.minutes(1);c.stopWhenUnlocked();
             c.e.setTimerMode(TimerMode.INDIVIDUAL);c.e.select(Set.of(X));c.e.select(new LinkedHashSet<>(List.of(I,X,R)));c.e.start(c.wall,c.elapsed);
             eq(2*MINUTE,c.e.limit(I));eq(12*MINUTE,c.e.limit(X));eq(0L,c.e.limit(R));eq(13*MINUTE,c.e.configuredSharedLimit());eq(1*MINUTE,total(c));
-            c.e.stop(c.wall,c.elapsed);c.e.setTimerMode(TimerMode.SHARED);c.e.start(c.wall,c.elapsed);eq(13*MINUTE,c.e.sharedRemaining());
+            c.stopWhenUnlocked();c.e.setTimerMode(TimerMode.SHARED);c.e.start(c.wall,c.elapsed);eq(13*MINUTE,c.e.sharedRemaining());
         });
         test("settings survive lunch process recovery and reboot",()->{
             Clock c=configured(TimerMode.SHARED,13*MINUTE,2*MINUTE,12*MINUTE,0);c.e.startManualLunch(c.wall,c.elapsed);c.minutes(15);c.e=copy(c.e,true);
-            eq(45*MINUTE,c.e.countdown(c.wall,c.elapsed));c.e=copy(c.e,false);c.elapsed=100;c.e.advance(c.wall,c.elapsed);
+            eq(45*MINUTE,c.e.countdown(c.wall,c.elapsed));c.e=copy(c.e,false);c.elapsed=100;c.e.advance(c.wall,c.elapsed);eq(Mode.STOPPED,c.mode());c.e.start(c.wall,c.elapsed);
             eq(45*MINUTE,c.e.countdown(c.wall,c.elapsed));eq(true,c.e.manualLunchUsedToday(c.wall));eq(2*MINUTE,c.e.limit(I));eq(12*MINUTE,c.e.limit(X));eq(0L,c.e.limit(R));
             c.minutes(105);eq(13*MINUTE,c.e.sharedRemaining());eq(2*MINUTE,c.e.remaining(I));eq(true,c.blocked(R));
         });
         test("unknown-app configured limit persists across deselection",()->{
-            Clock c=new Clock();c.e.stop(c.wall,c.elapsed);c.e.setAppLimit("other.app",12*MINUTE);c.e.select(Set.of("other.app"));c.e.start(c.wall,c.elapsed);c.focus("other.app");c.minutes(12);
-            eq(COOLDOWN,c.cooldown("other.app"));c.e.stop(c.wall,c.elapsed);c.e.select(Set.of(I));c.e=copy(c.e,true);eq(12*MINUTE,c.e.limit("other.app"));
+            Clock c=new Clock(false);c.e.setAppLimit("other.app",12*MINUTE);c.e.select(Set.of("other.app"));c.e.start(c.wall,c.elapsed);c.focus("other.app");c.minutes(12);
+            eq(COOLDOWN,c.cooldown("other.app"));c.stopWhenUnlocked();c.e.select(Set.of(I));c.e=copy(c.e,true);eq(12*MINUTE,c.e.limit("other.app"));
         });
         test("changing an allowance while stopped preserves history and starts fresh",()->{
-            Clock c=new Clock();c.focus(X);c.minutes(3);c.e.stop(c.wall,c.elapsed);c.e.setAppLimit(X,MINUTE);c.e.start(c.wall,c.elapsed);eq(MINUTE,c.e.remaining(X));eq(3*MINUTE,total(c));
+            Clock c=new Clock();c.focus(X);c.minutes(3);c.stopWhenUnlocked();c.e.setAppLimit(X,MINUTE);c.e.start(c.wall,c.elapsed);eq(MINUTE,c.e.remaining(X));eq(3*MINUTE,total(c));
         });
         test("v05 shared45 migration preserves active usage and independent deadlines",()->{
             Clock c=partial45();eq(TimerMode.SHARED,c.e.timerMode());eq(45*MINUTE,c.e.sharedLimit());eq(30*MINUTE,c.e.configuredSharedLimit());eq(26*MINUTE,c.e.sharedRemaining());
@@ -155,7 +155,7 @@ final class V06Tests {
         });
         test("v05 manual lunch migration retains deadline quota and suppression",()->{
             Clock c=fixture("legacy-v05-manual-lunch.bin",wall(10,24),1_441_000);eq(Mode.LUNCH,c.mode());eq(55*MINUTE,c.e.countdown(c.wall,c.elapsed));eq(true,c.e.isManualLunch());eq(true,c.e.manualLunchUsedToday(c.wall));eq(45*MINUTE,c.e.sharedLimit());
-            eq(7*MINUTE,total(c));c.e=copy(c.e,false);c.elapsed=100;c.e.advance(c.wall,c.elapsed);eq(55*MINUTE,c.e.countdown(c.wall,c.elapsed));eq(true,c.e.manualLunchUsedToday(c.wall));
+            eq(7*MINUTE,total(c));c.e=copy(c.e,false);c.elapsed=100;c.e.advance(c.wall,c.elapsed);eq(Mode.STOPPED,c.mode());c.e.start(c.wall,c.elapsed);eq(55*MINUTE,c.e.countdown(c.wall,c.elapsed));eq(true,c.e.manualLunchUsedToday(c.wall));
             c.minutes(115);eq(Mode.READY,c.mode());eq(30*MINUTE,c.e.sharedRemaining());eq(7*MINUTE,total(c));
         });
         test("v05 early-stop block migration keeps full remaining block",()->{

@@ -21,7 +21,11 @@ final class StateStore {
             String data = prefs.getString("engine", "");
             try (var in = new ObjectInputStream(new ByteArrayInputStream(Base64.decode(data, Base64.NO_WRAP)))) {
                 RulesEngine result = (RulesEngine) in.readObject();
-                result.attach(boot >= 0 && boot == prefs.getInt("boot", -2));
+                int savedBoot = prefs.getInt("boot", -1);
+                // Only a confirmed boot change discards a running session. Missing evidence
+                // must not turn ordinary process recreation into a Stop-lock bypass.
+                boolean rebooted = boot >= 0 && savedBoot >= 0 && boot != savedBoot;
+                result.attach(!rebooted);
                 return result;
             }
         } catch (IOException | ClassNotFoundException | RuntimeException ignored) {

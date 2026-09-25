@@ -1,59 +1,48 @@
-# Validation — SocialPause 0.6.0
+# Validation — SocialPause 0.7.0
 
-Validated on 2026-09-23 on the Apple Silicon development Mac and an isolated Android 16 ARM64 emulator. Physical Samsung acceptance is separate.
+Validated on 2026-09-25 on the Apple Silicon development Mac and an isolated Android 16 ARM64 emulator (API 36). Samsung device acceptance remains separate.
 
-## Build and compatibility
+## Build and saved-state compatibility
 
-- `sh scripts/verify.sh`: **BUILD SUCCESSFUL**, 14 seconds, 51 actionable tasks (33 executed, 18 up-to-date).
-- **129 timing/presentation scenarios passed**, including **20,000 randomized reference-model transitions**. Coverage includes configured/zero limits, independent/shared exhaustion, delayed callbacks, pause/focus behavior, lunch overrides and schedule boundaries, history, and serialization recovery.
-- Android lint: **0 errors, 1 existing warning** about a newer Gradle version. No checks suppressed.
-- APK: **0.6.0**, version code **8**, compile/target SDK 36, min SDK 33; no INTERNET permission. Verified signature matches the previously delivered APK, enabling an in-place update.
-- Synthetic fixtures serialized by the original 0.5 engine preserve partial shared usage, independent cooldowns, stopped state, active manual lunch and post-lunch cooldown. Existing genuine 0.2/0.4 migration fixtures remain covered.
-- Upgraded the emulator from the actual 0.5 APK with a synthetic active 45-minute shared cycle. Its 32 remaining minutes, partial app usage and running independent cooldown survived; configured future shared allowance became 30 minutes. A separate original-engine 60-minute serialization check also preserved the active budget and verified that only group reset adopted the new 30-minute configuration.
+- `sh scripts/verify.sh :app:assembleDebugAndroidTest`: **BUILD SUCCESSFUL**. The final run completed in 8 seconds (77 actionable tasks). Engine scenarios, personal-install APK assembly, emulator test APK assembly, and Android lint passed.
+- **165 timing/presentation/recovery scenarios passed**, including the existing **20,000 randomized reference-model transitions**. New coverage exercises the exact six-hour deadline, delayed callbacks, repeated Start, rejected Stop, wall-clock changes, paused usage, lunch/cooldown resets, reboot, same-boot process recreation, dismissal identities and current-process startup evidence.
+- Lint: **0 errors, 1 existing warning** about a newer Gradle version. No checks were suppressed.
+- Five synthetic fixtures serialized with the original 0.6 engine verify partial app/shared usage, independent/group cooldowns, active manual lunch, early post-lunch cooldown and stopped state. Existing 0.2/0.4/0.5 migration fixtures remain covered. Existing runs receive no retrospective Stop lock; their next Start creates one.
+- APK identity: **0.7.0**, version code **9**, package `app.socialpause`, compile/target SDK 36, minimum SDK 33. No INTERNET permission.
+- The APK signature matches the original public fingerprint in `.github/release-signing.sha256`; it can update the existing personal installation without uninstalling. The private key remains local and excluded from source archives.
 
-## Android runtime checks
+## Emulator notification and UI checks
 
-The emulator uses synthetic state only. Clock and Calendar substitute for additional selected apps available offline. Production timer constants were not shortened; near-boundary fixtures accelerate waiting for exhaustion.
+The dependency-free `RuntimeChecks` instrumentation requires a debug build, emulator hardware and explicit `synthetic=true`. It refuses physical phones. Its test-only fixtures adjust phase endpoints near boundaries without changing production timer constants. Notification callbacks are delivered through actual Android PendingIntents; assertions inspect actual posted notification payloads, rather than inferring them from engine labels.
 
-- Appearance: switched and persisted light/dark mode, including process recreation, without changing usage or cooldown deadlines. Visually inspected Home, app allowance settings, shared sheet and Lunch wheels in both themes and at 150% font scale. Save/Cancel/Done remained reachable.
-- App sliders: zero and maximum values persisted. Shared slider saved 1 and 30 minutes immediately; Back retained changes. Shared duration was disabled in Individual mode, and mode/allowance editing was disabled while running.
-- Zero allowance: blocked the app with No allowance and no invented unlock time. An all-zero selection remained blocked without repeatedly starting cooldowns; the notification described No allowance. Lunch and overall Stop still allowed unrestricted use.
-- Positive app cap in Shared mode: exhausted a one-minute Clock allowance and observed an independent 60-minute cooldown while four shared minutes remained. It did not start a group block.
-- Shared exhaustion: exhausted the remaining shared budget before the app cap and observed a distinct shared cooldown across selected apps.
-- Focused notification: shared time limited the active countdown; the notification requested live promotion. Opening the drawer continued counting the underlying app; Home and screen lock paused usage.
-- Lunch wheels: validated 12:00 AM, 12:00 PM and 11:59 PM conversion. Cancel and outside dismissal discarded edited drafts. The scheduling engine retains 0.5 conditional today/tomorrow rules, covered by fake-clock tests; the design handoff's always-tomorrow policy was not adopted.
-- App picker: added Calendar, saved once, reopened with it selected, then cancelled a draft removal without changing persisted selection. Previous 0.5 picker regression evidence additionally covers repeated opens and empty-selection validation; YouTube remains a phone check.
-- Accessibility: revocation stopped monitoring and removed its notification; re-enabling did not restart it. Previous 0.5 runtime coverage also exercised revocation during independent cooldown and lunch; those controller paths were retained.
-- No SocialPause crash or ANR appeared in the emulator crash log or app exit history.
+**Eight runtime checks passed:**
 
-UI inspection used a temporary automation helper with `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, so it did not disconnect the monitoring service. The helper, emulator image and synthetic runtime state are not app dependencies or source-archive contents.
+- In both Individual and Shared modes, dismissing ordinary manual-lunch and post-lunch notifications preserves the subsequent focused promotion request, app/limiting icon, compact timer text, countdown chronometer and standard ProgressStyle expanded template. A delayed ordinary callback remains ordinary after the live notification replaces it.
+- Dismissing a real focused live-request notification suppresses promotion for that monitoring run while retaining its drawer countdown. Start clears suppression; a delayed callback from the previous run cannot suppress the new run.
+- Existing ambiguous `ordinary-run` suppression remains until Start.
+- The controller rejects early Stop; repeated Start preserves the run and lock.
+- Home displays the pre-Start explanation, disables Stop after Start, and displays HH:MM:SS. Its existing ticker enables Stop at the deadline without stopping monitoring automatically.
+- Manual lunch and Stop lunch remain usable while the main Stop stays locked, and manual daily eligibility is consumed once.
 
-## Delivery and device limits
+The three Home checks passed again in dark mode at **150% font scale**. Light, dark and large-text screenshots were visually inspected: the disabled button and countdown remain readable without overlap, and the page remains scrollable. No SocialPause crash was recorded in the emulator crash log.
 
-`artifacts/SocialPause.apk` and `SocialPause-debug.apk` are identical personal-install builds. `SocialPause-source.zip` contains current source, guides and synthetic migration fixtures, excluding signing keys, SDK paths, caches and build output. Build/lint results and isolated emulator evidence are under `artifacts/v0.6.0/`; checksums are in `artifacts/SHA256SUMS.txt`.
+An initial synthetic test burst exceeded Android's notification enqueue rate limit. The harness now spaces transitions realistically; production notification logic was not changed to retry or bypass the platform limit. Test setup also toggles Accessibility to clear Android's crashed-service state after instrumentation terminates its target process.
 
-Open the main repository root in Android Studio. The old extracted `artifacts/SocialPauseBuild` folder is not the working project and has not been refreshed.
+## External lifecycle checks
 
-Keep Samsung **Developer options → Live notifications for all apps** enabled as previously confirmed on the user's phone. Emulator success does not establish Samsung live-pill rendering, multi-window behavior, battery management or a full real-time cooldown. Follow DEVICE_TESTS.md for physical Galaxy S24 Ultra acceptance, including YouTube selection, theme/wheel appearance and upgrade behavior.
+**Six lifecycle checks passed**, using normal launcher starts and persisted-state inspection outside instrumentation:
 
+- Android Force stop followed by a normal launch leaves monitoring stopped, clears the Stop lock, and retains manual lunch eligibility/history.
+- Killing only the app process, then launching normally, retains monitoring, usage, monitoring-run identity and the remaining lock. This was not simulated with Force stop.
+- Accessibility removal during usage, an independent cooldown, and manual lunch stops monitoring despite the lock. Restoring permission leaves monitoring stopped. All three checks show no active SocialPause notification or scheduled alarm afterward; history and lunch eligibility survive.
+- An actual emulator reboot leaves monitoring stopped until Start, clears the elapsed-time lock, and preserves manual lunch eligibility/history. The subsequent normal Start and disabled Stop were also visually checked.
 
-## Release automation preparation — 2026-09-25
+## Delivery and remaining acceptance
 
-No Android application or timing-engine source changed in this preparation.
-
-- `sh scripts/verify.sh` passed again on the local JDK 21: **129 scenarios**, **20,000 reference-model transitions**, successful APK assembly, and lint **0 errors / 1 existing warning**. The run finished in 7 seconds.
-- The GitHub workflow passed **actionlint 1.7.12** validation. Action commit hashes were resolved from the official action repositories, and the validator download was checked against its published SHA-256 checksum.
-- Five isolated packaging-guard checks rejected invalid tags, a version mismatch, a missing original key, an uncommitted tree, and an existing tag pointing to a different commit. The real repository's dirty-tree check also rejected packaging before commit.
-- Gitleaks found no leaks in the proposed workflow, release helper, notes and guides. The committed signing fingerprint is public certificate metadata; the private key remains ignored and local.
-- GitHub-hosted execution and release publication are **pending**. The user chose to finish local preparation and sign in to GitHub CLI later. Local/static checks do not claim that the Ubuntu CI jobs have run. The workflow is configured to test both JDK 17 and 21 once pushed.
-
-`scripts/package-release.py` records its own final verification log under ignored `artifacts/releases/v0.6.0/`, verifies APK identity and the original signing certificate, and packages four reviewed release assets. Publishing instructions are in PUBLISHING.md. No emulator or ADB server was started for this CI/release work.
-
-
-## GitHub SDK setup correction — 2026-09-25
-
-The first GitHub Android job failed before compilation: `sdkmanager: command not found` (exit 127). The original workflow assumed the runner exposed that tool on PATH. Static workflow validation cannot verify installed tools on a hosted runner.
-
-The workflow now uses a commit-pinned `android-actions/setup-android` step to bootstrap command-line tools, accept SDK licenses, install platform 36 / Build-Tools 36.0.0, and export the SDK paths. The command-line tools build is explicitly pinned to 15859902. Timing-engine and Android app source are unchanged.
-
-The corrected workflow passes actionlint. The release signing fingerprint was compared directly with the prepared APK's public certificate and matches; no private signing files are tracked. Final local build/signature/checksum results are recorded by `scripts/package-release.py` in `artifacts/releases/v0.6.0/build.log` and `BUILD-INFO.txt`. The corrected GitHub-hosted run still requires pushing this fix; a rerun of the old commit would use the old workflow.
+- Named personal APKs: `artifacts/SocialPause.apk` and `artifacts/SocialPause-debug.apk`.
+- `artifacts/SocialPause-source.zip` is a snapshot of the reviewed working source, including guides and synthetic test fixtures. It excludes private keys, SDK paths, caches, generated build output and runtime data. It is not a published GitHub release or a clean-commit release bundle.
+- Build/lint output, synthetic runtime results, screenshots, lifecycle snapshots and checksums are under ignored `artifacts/v0.7.0/`. Top-level artifact checksums are in `artifacts/SHA256SUMS.txt`.
+- Open the main repository root in Android Studio. The old extracted `artifacts/SocialPauseBuild` folder is not the working project.
+- After updating an already-running 0.6 installation, use Stop then Start once to clear any old notification suppression and begin the first six-hour lock. History and daily lunch eligibility remain intact.
+- Keep Samsung **Developer options → Live notifications for all apps** enabled. Actual One UI live-pill rendering after lunch still needs the Galaxy S24 Ultra check in DEVICE_TESTS.md; emulator eligibility and notification payloads do not prove Samsung presentation.
+- GitHub-hosted CI and publishing were not run for these uncommitted changes. The existing build/test workflow remains in place; release notes and publishing guidance now target 0.7.0/code 9.

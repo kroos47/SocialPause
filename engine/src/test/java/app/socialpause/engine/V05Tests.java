@@ -10,7 +10,7 @@ import static app.socialpause.engine.RulesEngine.*;
 /** New-mode, lunch policy and real-v0.4 migration scenarios. */
 final class V05Tests {
     static Clock shared(long limit) {
-        Clock c = new Clock(); c.e.stop(c.wall,c.elapsed); c.e.setTimerMode(TimerMode.SHARED);
+        Clock c = new Clock(false); c.e.setTimerMode(TimerMode.SHARED);
         c.e.setSharedLimit(limit); c.e.start(c.wall,c.elapsed); return c;
     }
     static void rejects(Class<? extends RuntimeException> type, Runnable action) {
@@ -31,7 +31,7 @@ final class V05Tests {
             Clock c=new Clock();eq(TimerMode.INDIVIDUAL,c.e.timerMode());eq(20*MINUTE,c.e.sharedLimit());
             rejects(IllegalStateException.class,()->c.e.setTimerMode(TimerMode.SHARED));
             rejects(IllegalStateException.class,()->c.e.setSharedLimit(10*MINUTE));
-            c.e.stop(c.wall,c.elapsed);rejects(IllegalStateException.class,()->c.e.setSharedLimit(20*MINUTE));c.e.setTimerMode(TimerMode.SHARED);
+            c.stopWhenUnlocked();rejects(IllegalStateException.class,()->c.e.setSharedLimit(20*MINUTE));c.e.setTimerMode(TimerMode.SHARED);
             for(long value:new long[]{0,30*MINUTE+1,31*MINUTE,MINUTE+1})rejects(IllegalArgumentException.class,()->c.e.setSharedLimit(value));
             for(long value:new long[]{MINUTE,20*MINUTE,30*MINUTE}){c.e.setSharedLimit(value);eq(value,c.e.sharedLimit());eq(value,c.e.configuredSharedLimit());}
         });
@@ -72,7 +72,7 @@ final class V05Tests {
             Clock c=shared(20*MINUTE);c.focus(X);c.minutes(3);c.e=copy(c.e,true);c.minutes(20);eq(17*MINUTE,c.e.sharedRemaining());eq(3*MINUTE,c.e.used(X));eq(null,c.e.focused());
         });
         test("shared mode switching preserves history and selected settings",()->{
-            Clock c=shared(20*MINUTE);c.focus(I);c.minutes(3);c.e.stop(c.wall,c.elapsed);c.e.setTimerMode(TimerMode.INDIVIDUAL);c.e.start(c.wall,c.elapsed);
+            Clock c=shared(20*MINUTE);c.focus(I);c.minutes(3);c.stopWhenUnlocked();c.e.setTimerMode(TimerMode.INDIVIDUAL);c.e.start(c.wall,c.elapsed);
             eq(TimerMode.INDIVIDUAL,c.e.timerMode());eq(INSTAGRAM_LIMIT,c.e.remaining(I));eq(3*MINUTE,c.e.history().total(LocalDate.of(2026,9,16),LocalDate.of(2026,9,16)));
         });
         test("notification shows the shared limiter and retains app rows",()->{
@@ -107,15 +107,15 @@ final class V05Tests {
             for(int offset:new int[]{250,310}){Clock c=new Clock();c.lunch();c.minutes(offset);c.e.startManualLunch(c.wall,c.elapsed);eq(true,c.e.isManualLunch());eq(COOLDOWN,c.e.countdown(c.wall,c.elapsed));c.minutes(60);eq(COOLDOWN,c.cooldown(X));}
         });
         test("manual quota survives stop start selection and process recovery",()->{
-            Clock c=new Clock();c.e.startManualLunch(c.wall,c.elapsed);c.minutes(120);c.e.stop(c.wall,c.elapsed);c.e.select(Set.of(X));c.e.setTimerMode(TimerMode.SHARED);c.e.start(c.wall,c.elapsed);c.e=copy(c.e,true);
+            Clock c=new Clock();c.e.startManualLunch(c.wall,c.elapsed);c.minutes(120);c.stopWhenUnlocked();c.e.select(Set.of(X));c.e.setTimerMode(TimerMode.SHARED);c.e.start(c.wall,c.elapsed);c.e=copy(c.e,true);
             eq(true,c.e.manualLunchUsedToday(c.wall));eq(false,c.e.manualLunchAvailable(c.wall));rejects(IllegalStateException.class,()->c.e.startManualLunch(c.wall,c.elapsed));
         });
         test("manual quota and lunch phase survive reboot without replay",()->{
-            Clock c=new Clock();c.lunch();c.minutes(180);c.e.startManualLunch(c.wall,c.elapsed);c.minutes(30);c.e=copy(c.e,false);c.elapsed=100;c.e.advance(c.wall,c.elapsed);
+            Clock c=new Clock();c.lunch();c.minutes(180);c.e.startManualLunch(c.wall,c.elapsed);c.minutes(30);c.e=copy(c.e,false);c.elapsed=100;c.e.advance(c.wall,c.elapsed);eq(Mode.STOPPED,c.mode());c.e.start(c.wall,c.elapsed);
             eq(true,c.e.manualLunchUsedToday(c.wall));eq(Mode.LUNCH,c.mode());eq(30*MINUTE,c.e.countdown(c.wall,c.elapsed));c.minutes(90);eq(Mode.READY,c.mode());eq(wall(14,0)+24*60*MINUTE,c.e.nextScheduledLunch(c.wall));
         });
-        test("stopped manual phase still resumes correctly after reboot",()->{
-            Clock c=new Clock();c.e.startManualLunch(c.wall,c.elapsed);c.minutes(10);c.e.stop(c.wall,c.elapsed);c.e=copy(c.e,false);c.elapsed=50;c.wall+=20*MINUTE;c.e.start(c.wall,c.elapsed);
+        test("system-stopped manual phase resumes only after Start following reboot",()->{
+            Clock c=new Clock();c.e.startManualLunch(c.wall,c.elapsed);c.minutes(10);c.e.systemStop(c.wall,c.elapsed);c.e=copy(c.e,false);c.elapsed=50;c.wall+=20*MINUTE;c.e.start(c.wall,c.elapsed);
             eq(Mode.LUNCH,c.mode());eq(30*MINUTE,c.e.countdown(c.wall,c.elapsed));eq(true,c.e.manualLunchUsedToday(c.wall));
         });
         test("manual quota renews on next local day while retaining overnight phase",()->{
@@ -131,7 +131,7 @@ final class V05Tests {
             c.minutes(60);eq(Mode.READY,c.mode());c.minutes(50);eq(Mode.READY,c.mode());eq(wall(14,0)+24*60*MINUTE,c.e.nextScheduledLunch(c.wall));
         });
         test("manual lunch requires running and early stop requires an active lunch",()->{
-            Clock c=new Clock();rejects(IllegalStateException.class,()->c.e.stopLunch(c.wall,c.elapsed));c.e.stop(c.wall,c.elapsed);eq(false,c.e.manualLunchAvailable(c.wall));rejects(IllegalStateException.class,()->c.e.startManualLunch(c.wall,c.elapsed));
+            Clock c=new Clock();rejects(IllegalStateException.class,()->c.e.stopLunch(c.wall,c.elapsed));c.stopWhenUnlocked();eq(false,c.e.manualLunchAvailable(c.wall));rejects(IllegalStateException.class,()->c.e.startManualLunch(c.wall,c.elapsed));
         });
         test("schedule can move later or earlier today when both starts are future",()->{
             Clock c=new Clock();c.lunch();c.focus(X);c.minutes(2);c.focus(null);c.e.lunch(true,780,c.wall,c.elapsed);eq(0L,c.e.pendingAt());eq(780,c.e.lunchMinute);eq(2*MINUTE,c.e.used(X));eq(wall(13,0),c.e.nextScheduledLunch(c.wall));
@@ -163,7 +163,7 @@ final class V05Tests {
                 Clock c=new Clock();c.e.lunchMinute=30;c.lunch();c.minutes(810);c.e.startManualLunch(c.wall,c.elapsed);c.minutes(5);
                 if(recovery==2)c.e.stop(c.wall,c.elapsed);
                 c.e=copy(c.e,recovery!=1);c.wall+=145*MINUTE;c.elapsed=recovery==1?100:c.elapsed+145*MINUTE;
-                if(recovery==2)c.e.start(c.wall,c.elapsed);else c.e.advance(c.wall,c.elapsed);
+                if(recovery!=0){eq(Mode.STOPPED,c.mode());c.e.start(c.wall,c.elapsed);}else c.e.advance(c.wall,c.elapsed);
                 eq(Mode.READY,c.mode());eq(0L,c.cooldown(X));eq(wall(0,30)+2*24*60*MINUTE,c.e.nextScheduledLunch(c.wall));
             }
         });
@@ -189,7 +189,7 @@ final class V05Tests {
             Clock cool=fixture("legacy-v04-lunch.bin",wall(15,20),19201000);eq(Mode.LUNCH_COOLDOWN,cool.mode());eq(40*MINUTE,cool.cooldown(X));eq(false,cool.e.manualLunchUsedToday(cool.wall));cool.minutes(40);eq(Mode.READY,cool.mode());
         });
         test("v04 migration survives reboot and retains active scheduled phase",()->{
-            Clock c=fixture("legacy-v04-lunch.bin",wall(14,20),15601000);c.e=copy(c.e,false);c.elapsed=100;c.e.advance(c.wall,c.elapsed);eq(Mode.LUNCH,c.mode());eq(40*MINUTE,c.e.countdown(c.wall,c.elapsed));
+            Clock c=fixture("legacy-v04-lunch.bin",wall(14,20),15601000);c.e=copy(c.e,false);c.elapsed=100;c.e.advance(c.wall,c.elapsed);eq(Mode.STOPPED,c.mode());c.e.start(c.wall,c.elapsed);eq(Mode.LUNCH,c.mode());eq(40*MINUTE,c.e.countdown(c.wall,c.elapsed));
         });
         randomShared();
     }

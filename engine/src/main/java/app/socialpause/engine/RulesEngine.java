@@ -9,14 +9,16 @@ public final class RulesEngine implements Serializable {
     private static final long serialVersionUID = 1L;
     public static final long MINUTE = 60_000L, APP_LIMIT = 10 * MINUTE,
             INSTAGRAM_LIMIT = 7 * MINUTE, COOLDOWN = 60 * MINUTE,
-            DEFAULT_SHARED_LIMIT = 20 * MINUTE;
+            DEFAULT_SHARED_LIMIT = 20 * MINUTE, STOP_LOCK = 6 * COOLDOWN;
     public enum Mode { STOPPED, READY, ACTIVE, SHARED_COOLDOWN, LUNCH, LUNCH_COOLDOWN }
     public enum TimerMode { INDIVIDUAL, SHARED }
     public final Set<String> selected = new LinkedHashSet<>(List.of("com.instagram.android", "com.twitter.android", "com.reddit.frontpage"));
     private final Map<String, Long> usage = new HashMap<>();
     private Map<String, Long> cooldowns = new HashMap<>();
-    private int stateVersion = 5;
+    private int stateVersion = 6;
     private long cycleSerial;
+    // Monotonic deadline for the main Stop button; independent of allowance/lunch resets.
+    private long stopUnlockElapsed;
     private UsageHistory history;
     public boolean running, lunchEnabled = true, sleepEnabled = true;
     public int lunchMinute = 840, sleepStart = 1320, sleepEnd = 600;
@@ -61,14 +63,33 @@ public final class RulesEngine implements Serializable {
             if (!running || timerMode != TimerMode.SHARED) sharedLimit = configuredSharedLimit;
             stateVersion = 5;
         }
+        if (stateVersion < 6) {
+            // Existing runs remain stoppable. Only the next explicit Start creates a lock.
+            stopUnlockElapsed = 0;
+            stateVersion = 6;
+        }
         // Reboot may refresh elapsed-time allowances, but never grants a second manual lunch
-        // or discards a wall-time lunch/post-lunch phase already in progress.
-        if (!sameBoot) reset();
+        // or discards a wall-time lunch/post-lunch phase already in progress. Monitoring
+        // stays stopped until Start; elapsed deadlines cannot be carried across boots.
+        if (!sameBoot) { reset(); running = false; stopUnlockElapsed = 0; }
     }
     public void start(long wall, long elapsed) {
-        reset(); cycleSerial++; running = true; focused = null; cursor = elapsed; settle(wall, elapsed);
+        if (running) return;
+        reset(); cycleSerial++; running = true; stopUnlockElapsed = elapsed + STOP_LOCK;
+        focused = null; cursor = elapsed; settle(wall, elapsed);
     }
-    public void stop(long wall, long elapsed) { advance(wall, elapsed); running = false; focused = null; }
+    /** Main user Stop. Platform permission/recovery paths must explicitly use systemStop. */
+    public void stop(long wall, long elapsed) {
+        if (!running) return;
+        if (!canStop(elapsed)) throw new IllegalStateException("Stop is locked for six hours after Start.");
+        systemStop(wall, elapsed);
+    }
+    /** Stop after confirmed permission loss or an explicit platform stop, regardless of the UI lock. */
+    public void systemStop(long wall, long elapsed) {
+        advance(wall, elapsed); running = false; focused = null; stopUnlockElapsed = 0;
+    }
+    public long stopLockRemaining(long elapsed) { return running ? Math.max(0, stopUnlockElapsed - elapsed) : 0; }
+    public boolean canStop(long elapsed) { return running && stopLockRemaining(elapsed) == 0; }
     private void reset() {
         usage.clear(); cooldowns.clear(); sharedUsed = 0; sharedCooldownEnd = 0;
         sharedLimit = configuredSharedLimit;
