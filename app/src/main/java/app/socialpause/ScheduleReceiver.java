@@ -12,6 +12,6 @@ public final class ScheduleReceiver extends BroadcastReceiver {
             AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED);
     @Override public void onReceive(Context c, Intent intent) {
         String action = intent.getAction();
-        if (action != null && ACTIONS.contains(action)) AppController.get(c).refresh();
+        if (action != null && ACTIONS.contains(action)) AppController.get(c).requestRefresh();
     }
 }

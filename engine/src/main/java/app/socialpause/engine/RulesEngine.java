@@ -37,12 +37,17 @@ public final class RulesEngine implements Serializable {
     private boolean manualOrigin;
     private long manualLunchDay = Long.MIN_VALUE, suppressedAutoDay = Long.MIN_VALUE,
             lastLunchDay = Long.MIN_VALUE;
+    private transient long revision;
+    /** Runtime-only bookkeeping; serialized field names and schema remain unchanged. */
+    public long revision() { return revision; }
+    public long historyRevision() { return history == null ? 0 : history.revision(); }
+    private void changed() { revision++; }
     private transient long cursor = -1;
     private transient String focused;
     private transient ZoneId zone = ZoneId.systemDefault();
 
     public void attach(boolean sameBoot) {
-        cursor = -1; focused = null; zone = ZoneId.systemDefault();
+        revision = 0; cursor = -1; focused = null; zone = ZoneId.systemDefault();
         if (cooldowns == null) cooldowns = new HashMap<>();
         if (stateVersion < 3) reset(); // Preserve the original pre-v0.3 one-time migration.
         if (stateVersion < 4) {
@@ -75,7 +80,7 @@ public final class RulesEngine implements Serializable {
     }
     public void start(long wall, long elapsed) {
         if (running) return;
-        reset(); cycleSerial++; running = true; stopUnlockElapsed = elapsed + STOP_LOCK;
+        reset(); cycleSerial++; running = true; stopUnlockElapsed = elapsed + STOP_LOCK; changed();
         focused = null; cursor = elapsed; settle(wall, elapsed);
     }
     /** Main user Stop. Platform permission/recovery paths must explicitly use systemStop. */
@@ -86,19 +91,23 @@ public final class RulesEngine implements Serializable {
     }
     /** Stop after confirmed permission loss or an explicit platform stop, regardless of the UI lock. */
     public void systemStop(long wall, long elapsed) {
-        advance(wall, elapsed); running = false; focused = null; stopUnlockElapsed = 0;
+        advance(wall, elapsed);
+        if (running || stopUnlockElapsed != 0) changed();
+        running = false; focused = null; stopUnlockElapsed = 0;
     }
     public long stopLockRemaining(long elapsed) { return running ? Math.max(0, stopUnlockElapsed - elapsed) : 0; }
     public boolean canStop(long elapsed) { return running && stopLockRemaining(elapsed) == 0; }
     private void reset() {
+        if (!usage.isEmpty() || !cooldowns.isEmpty() || sharedUsed != 0 || sharedCooldownEnd != 0 || sharedLimit != configuredSharedLimit) changed();
         usage.clear(); cooldowns.clear(); sharedUsed = 0; sharedCooldownEnd = 0;
         sharedLimit = configuredSharedLimit;
     }
     public long cycleId() { return cycleSerial; }
-    public UsageHistory history() { if (history == null) history = new UsageHistory(); return history; }
+    public UsageHistory history() { if (history == null) { history = new UsageHistory(); changed(); } return history; }
     public TimerMode timerMode() { return timerMode; }
     public void setTimerMode(TimerMode value) {
-        requireStopped(); timerMode = Objects.requireNonNull(value); reset();
+        requireStopped(); Objects.requireNonNull(value);
+        if (timerMode != value) { timerMode = value; changed(); } reset();
     }
     /** Effective budget for the current cycle, including an uninterrupted pre-v0.6 cycle. */
     public long sharedLimit() { return sharedLimit; }
@@ -109,7 +118,7 @@ public final class RulesEngine implements Serializable {
         if (timerMode != TimerMode.SHARED) throw new IllegalStateException("Select Shared mode to change its allowance.");
         if (value < MINUTE || value > 30 * MINUTE || value % MINUTE != 0)
             throw new IllegalArgumentException("Shared allowance must be 1–30 minutes in one-minute steps.");
-        configuredSharedLimit = value; reset();
+        if (configuredSharedLimit != value) { configuredSharedLimit = value; changed(); } reset();
     }
     private void requireStopped() { if (running) throw new IllegalStateException("Stop tracking before changing allowances or apps."); }
     public long sharedRemaining() { return Math.max(0, sharedLimit - sharedUsed); }
@@ -125,7 +134,7 @@ public final class RulesEngine implements Serializable {
         if (pkg.isBlank()) throw new IllegalArgumentException("An app package is required.");
         if (value < 0 || value > maximumLimit(pkg) || value % MINUTE != 0)
             throw new IllegalArgumentException("App allowance must be whole minutes within its supported range.");
-        appLimits.put(pkg, value); reset();
+        if (limit(pkg) != value) { appLimits.put(pkg, value); changed(); } reset();
     }
     public boolean noAllowance(String pkg) { return limit(pkg) == 0; }
     public long used(String pkg) { return usage.getOrDefault(pkg, 0L); }
@@ -150,20 +159,40 @@ public final class RulesEngine implements Serializable {
         int count = 0; for (String pkg : selected) if (!blocked(pkg, wall, elapsed)) count++; return count;
     }
     public String focused() { return focused; }
+    public RulesSnapshot snapshot(long wall, long elapsed) { return RulesSnapshot.capture(this, wall, elapsed); }
+    /** Projection for rendering between inspections; never commits usage or crosses a rule boundary. */
+    long pendingUsage(long wall, long elapsed) {
+        if (cursor < 0 || elapsed <= cursor || focused == null || !running) return 0;
+        long cursorWall = wall - (elapsed - cursor);
+        if (mode(cursorWall, cursor) != Mode.ACTIVE) return 0;
+        long pending = Math.min(elapsed - cursor, Math.min(remaining(focused), nextBoundary(cursorWall, cursor) - cursorWall));
+        if (timerMode == TimerMode.SHARED) pending = Math.min(pending, sharedRemaining());
+        return Math.max(0, pending);
+    }
+    public long usageDeadline(long wall, long elapsed) {
+        if (focused == null || cursor < 0 || mode(wall, elapsed) != Mode.ACTIVE) return Long.MAX_VALUE;
+        return cursor + Math.min(remaining(focused), timerMode == TimerMode.SHARED ? sharedRemaining() : Long.MAX_VALUE);
+    }
     public long pendingAt() { return pendingAt; }
     public int pendingLunchMinute() { return pendingMinute; }
     public boolean pendingLunchEnabled() { return pendingEnabled; }
     public void select(Set<String> packages) {
         if (packages.isEmpty()) throw new IllegalArgumentException("Select at least one app.");
-        requireStopped(); selected.clear(); selected.addAll(packages); reset(); focused = null;
+        requireStopped();
+        if (!new ArrayList<>(selected).equals(new ArrayList<>(packages))) { selected.clear(); selected.addAll(packages); changed(); }
+        reset(); focused = null;
     }
     public void sleep(boolean enabled, int start, int end) {
         checkMinute(start); checkMinute(end);
         if (start == end) throw new IllegalArgumentException("Sleep start and end must differ.");
+        if (sleepEnabled != enabled || sleepStart != start || sleepEnd != end) changed();
         sleepEnabled = enabled; sleepStart = start; sleepEnd = end;
     }
     public void lunch(boolean enabled, int minute, long wall, long elapsed) {
         checkMinute(minute); advance(wall, elapsed);
+        long oldHandled = handledLunch, oldPending = pendingAt;
+        int oldMinute = lunchMinute, oldPendingMinute = pendingMinute;
+        boolean oldEnabled = lunchEnabled, oldPendingEnabled = pendingEnabled;
         LocalDate today = date(wall);
         long oldStart = at(today, lunchMinute), proposedStart = at(today, minute);
         if (wall < oldStart && wall < proposedStart && lastLunchDay != today.toEpochDay()) {
@@ -175,6 +204,8 @@ public final class RulesEngine implements Serializable {
             pendingAt = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli();
             if (activeLunch != Long.MIN_VALUE) pendingAt = Math.max(pendingAt, lunchCooldownEnd);
         }
+        if (oldHandled != handledLunch || oldPending != pendingAt || oldMinute != lunchMinute || oldPendingMinute != pendingMinute
+                || oldEnabled != lunchEnabled || oldPendingEnabled != pendingEnabled) changed();
     }
     public boolean manualLunchUsedToday(long wall) { return manualLunchDay == day(wall); }
     public boolean manualLunchAvailable(long wall) { return running && !manualLunchUsedToday(wall); }
@@ -182,13 +213,13 @@ public final class RulesEngine implements Serializable {
     public void startManualLunch(long wall, long elapsed) {
         advance(wall, elapsed);
         if (!manualLunchAvailable(wall)) throw new IllegalStateException("Manual lunch is available once per day while tracking.");
-        manualLunchDay = day(wall); suppressedAutoDay = manualLunchDay;
+        manualLunchDay = day(wall); suppressedAutoDay = manualLunchDay; changed();
         beginLunch(wall, true);
     }
     public void stopLunch(long wall, long elapsed) {
         advance(wall, elapsed);
         if (mode(wall, elapsed) != Mode.LUNCH) throw new IllegalStateException("No lunch break is active.");
-        lunchEnd = wall; lunchCooldownEnd = wall + COOLDOWN; focused = null;
+        lunchEnd = wall; lunchCooldownEnd = wall + COOLDOWN; focused = null; changed();
     }
     /** The next eligible automatic occurrence; skipped overlaps are never replayed. */
     public long nextScheduledLunch(long wall) {
@@ -226,25 +257,27 @@ public final class RulesEngine implements Serializable {
     }
     private void beginLunch(long start, boolean manual) {
         reset(); focused = null; activeLunch = start; lunchEnd = start + COOLDOWN;
-        lunchCooldownEnd = lunchEnd + COOLDOWN; manualOrigin = manual; lastLunchDay = day(start);
+        lunchCooldownEnd = lunchEnd + COOLDOWN; manualOrigin = manual; lastLunchDay = day(start); changed();
     }
     private void finishLunch() {
-        activeLunch = Long.MIN_VALUE; lunchEnd = lunchCooldownEnd = 0; manualOrigin = false;
+        activeLunch = Long.MIN_VALUE; lunchEnd = lunchCooldownEnd = 0; manualOrigin = false; changed();
         reset(); focused = null;
     }
     private void settle(long wall, long elapsed) {
         if (pendingAt > 0 && wall >= pendingAt) {
-            if (activeLunch != Long.MIN_VALUE && wall < lunchCooldownEnd) pendingAt = lunchCooldownEnd;
+            if (activeLunch != Long.MIN_VALUE && wall < lunchCooldownEnd) {
+                if (pendingAt != lunchCooldownEnd) { pendingAt = lunchCooldownEnd; changed(); }
+            }
             else {
                 lunchEnabled = pendingEnabled; lunchMinute = pendingMinute;
-                handledLunch = Math.max(handledLunch, latestLunch(pendingAt - 1)); pendingAt = 0;
+                handledLunch = Math.max(handledLunch, latestLunch(pendingAt - 1)); pendingAt = 0; changed();
             }
         }
         if (!running) return;
         if (lunchEnabled) {
             long latest = latestLunch(wall);
             if (latest > handledLunch) {
-                handledLunch = latest;
+                handledLunch = latest; changed();
                 // Compare the scheduled start against the persisted previous interval before
                 // clearing it. Process recovery after that interval must not replay an overlap.
                 if (day(latest) != suppressedAutoDay && (activeLunch == Long.MIN_VALUE || latest >= lunchCooldownEnd)) {
@@ -258,7 +291,7 @@ public final class RulesEngine implements Serializable {
         var iterator = cooldowns.entrySet().iterator();
         while (iterator.hasNext()) {
             var entry = iterator.next();
-            if (elapsed >= entry.getValue()) { usage.remove(entry.getKey()); iterator.remove(); }
+            if (elapsed >= entry.getValue()) { usage.remove(entry.getKey()); iterator.remove(); changed(); }
         }
         Mode current = mode(wall, elapsed);
         if (current == Mode.LUNCH_COOLDOWN || current == Mode.SHARED_COOLDOWN) focused = null;
@@ -300,7 +333,7 @@ public final class RulesEngine implements Serializable {
             if (step <= 0) throw new IllegalStateException("Timing boundary did not advance.");
             if (count) {
                 String app = focused;
-                history().record(app, w, step, zone); usage.put(app, used(app) + step);
+                history().record(app, w, step, zone); usage.put(app, used(app) + step); changed();
                 if (timerMode == TimerMode.SHARED) sharedUsed += step;
                 if (remaining(app) == 0) { cooldowns.put(app, cursor + step + COOLDOWN); focused = null; }
                 if (timerMode == TimerMode.SHARED && sharedRemaining() == 0) {
@@ -312,7 +345,7 @@ public final class RulesEngine implements Serializable {
         settle(wall, elapsed);
     }
     public long nextBoundary(long wall, long elapsed) {
-        long next = wall + 24 * 60 * MINUTE;
+        long next = at(date(wall).plusDays(1), 0);
         if (pendingAt > wall) next = Math.min(next, pendingAt);
         if (lunchEnabled) {
             long tomorrow = at(date(latestLunch(wall)).plusDays(1), lunchMinute);

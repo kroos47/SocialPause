@@ -3,7 +3,7 @@ name: Build and test
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['v*', '[0-9]*.[0-9]*.[0-9]*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -36,8 +36,10 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
-      - name: Run all timing and migration scenarios
+      - name: Run timing, migration, and deterministic optimization scenarios
         run: sh scripts/test-engine.sh | tee engine-tests.log
+      - name: Verify instrumentation-result handling
+        run: python3 scripts/test-runtime-wrapper.py
       - name: Upload timing-test log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -48,7 +50,7 @@ jobs:
           if-no-files-found: warn
 
   android:
-    name: Android APK and lint
+    name: Android APKs and lint
     needs: engine
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -83,11 +85,11 @@ jobs:
           from pathlib import Path
           source = Path('app/build.gradle.kts').read_text()
           version = re.search(r'versionName\s*=\s*"([^"]+)"', source).group(1)
-          if os.environ['RELEASE_TAG'] != 'v' + version:
+          if os.environ['RELEASE_TAG'] not in (version, 'v' + version):
               raise SystemExit('Release tag does not match versionName in app/build.gradle.kts')
           PY
-      - name: Build APK and run Android lint
-        run: sh ./gradlew --no-daemon :app:assembleDebug :app:lintDebug --console=plain | tee android-build.log
+      - name: Build application and instrumentation APKs and run lint
+        run: sh ./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --console=plain | tee android-build.log
       - name: Upload build and lint reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -102,6 +104,7 @@ jobs:
         run: |
           mkdir -p ci-apk
           cp app/build/outputs/apk/debug/app-debug.apk ci-apk/SocialPause-ci.apk
+          cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk ci-apk/SocialPause-tests-ci.apk
           cat > ci-apk/README.txt <<'EOF'
           This APK is a test build signed with a temporary runner key.
           It cannot update an installation signed with the original SocialPause key.

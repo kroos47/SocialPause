@@ -48,3 +48,9 @@ service-account*.json
 !/docs/UI_UPDATE.md
 !/docs/VALIDATION.md
 !/docs/PUBLISHING.md
+
+# Local verification traces and Python helper caches
+__pycache__/
+*.trace
+*.perfetto-trace
+!/docs/PERFORMANCE.md

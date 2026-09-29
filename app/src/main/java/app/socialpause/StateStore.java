@@ -6,12 +6,13 @@ import android.provider.Settings;
 import android.util.Base64;
 import java.io.*;
 import app.socialpause.engine.RulesEngine;
+import app.socialpause.engine.PersistenceCheckpoint;
 
 /** Private, offline state. No exported input is deserialized. Schema changes must migrate/reset this key. */
 final class StateStore {
     private final SharedPreferences prefs;
     private final int boot;
-    private String previous = "";
+    private final PersistenceCheckpoint checkpoint = new PersistenceCheckpoint();
     StateStore(Context context) {
         prefs = context.getSharedPreferences("socialpause-v1", Context.MODE_PRIVATE);
         boot = Settings.Global.getInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
@@ -33,13 +34,13 @@ final class StateStore {
         }
     }
     void save(RulesEngine engine) {
+        if (!checkpoint.needsSave(engine)) return;
         try {
             var bytes = new ByteArrayOutputStream();
             try (var out = new ObjectOutputStream(bytes)) { out.writeObject(engine); }
             String encoded = Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP);
-            if (!encoded.equals(previous)) {
-                prefs.edit().putString("engine", encoded).putInt("boot", boot).apply(); previous = encoded;
-            }
+            prefs.edit().putString("engine", encoded).putInt("boot", boot).apply();
+            checkpoint.saved(engine);
         } catch (IOException e) { throw new IllegalStateException("Cannot save timing state", e); }
     }
 }

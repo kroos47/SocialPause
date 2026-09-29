@@ -22,10 +22,10 @@ def output(*args, **kwargs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('tag', help='Version tag, for example v0.6.0')
+    parser.add_argument('tag', help='Version tag, for example 0.7.2 (v-prefixed tags also supported)')
     args = parser.parse_args()
-    if not re.fullmatch(r'v\d+\.\d+\.\d+', args.tag):
-        raise SystemExit('Use a version tag such as v0.6.0.')
+    if not re.fullmatch(r'v?\d+\.\d+\.\d+', args.tag):
+        raise SystemExit('Use a version tag such as 0.7.2 or v0.7.2.')
     root = Path(__file__).resolve().parent.parent
     os.chdir(root)
     if output('git', 'status', '--porcelain'):
@@ -34,7 +34,7 @@ def main():
     config = (root / 'app/build.gradle.kts').read_text()
     version = re.search(r'versionName\s*=\s*"([^"]+)"', config).group(1)
     code = int(re.search(r'versionCode\s*=\s*(\d+)', config).group(1))
-    if args.tag != 'v' + version:
+    if args.tag not in (version, 'v' + version):
         raise SystemExit('Tag must match versionName in app/build.gradle.kts.')
     tag = subprocess.run(['git', 'rev-parse', '--verify', '--quiet', args.tag + '^{commit}'],
                          text=True, capture_output=True)
@@ -70,9 +70,9 @@ def main():
         path = Path(name)
         if name.startswith(('.tools/', 'artifacts/')) or path.name == 'local.properties' or path.suffix in ('.keystore', '.jks', '.key', '.pem', '.apk', '.aab'):
             raise SystemExit('Unexpected private/generated tracked file: ' + name)
-    notes = root / '.github/release-notes' / (args.tag + '.md')
+    notes = root / '.github/release-notes' / ('v' + version + '.md')
     if not notes.is_file():
-        raise SystemExit('Add reviewed release notes at .github/release-notes/' + args.tag + '.md')
+        raise SystemExit('Add reviewed release notes at .github/release-notes/' + 'v' + version + '.md')
     destination = root / 'artifacts/releases' / args.tag
     destination.mkdir(parents=True, exist_ok=True)
     with (destination / 'build.log').open('w') as log:

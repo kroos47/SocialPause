@@ -89,7 +89,7 @@ Android Accessibility event
   → Accessibility service redirects to Home if the observed package is blocked
 ```
 
-`MainActivity` displays the same engine state. Leaving the dashboard does not own or stop the engine's lifetime; the Accessibility service does the monitoring.
+`MainActivity` renders a read-only RulesSnapshot once per second and does not save or schedule on UI ticks. Leaving the dashboard does not own or stop the engine's lifetime; the Accessibility service does the monitoring.
 
 ## Agent instructions and human guides
 
@@ -154,3 +154,19 @@ Editing a generated APK or compiled class does not change the source. Make chang
 - `FocusResolver.java`, `SocialAccessibilityService.java` and `AppController.java`: report whether a system panel covers the underlying app separately from usage focus. Drawer closure can restore the live countdown without pausing usage or reopening the app.
 - `NotificationDismissalPolicy.java`, `TimerNotifications.java` and `NotificationDismissReceiver.java`: recover focused live requests after dismissal, validate run/generation/surface provenance, clear old suppression preferences without touching timer state, and keep one notification without a cancel/repost loop.
 - Engine scenarios and `RuntimeChecks.java` cover restoration, stale callbacks, notification payloads and migration. Actual drawer gestures and Samsung live-pill rendering are separate acceptance checks in `DEVICE_TESTS.md`.
+
+## Added for 0.7.2
+
+| File | Purpose / major improvement |
+|---|---|
+| `engine/.../PersistenceCheckpoint.java` | Compares engine identity and transient revisions before encoding; unchanged updates avoid full-history serialization. |
+| `engine/.../RulesSnapshot.java` | Immutable captured values and deadlines for countdown rendering without mutating timers. |
+| `engine/.../MonitoringSchedule.java` | Testable 500 ms / 2 second / 30 second / stopped policy, retaining fast checks during uncertain selected visibility. |
+| `engine/.../NotificationDisplay.java` | Lightweight visible-state comparison and clock-only update gate before formatting and building Android notifications. |
+| `app/.../ApplicationLabels.java` | Package/locale label cache shared safely with the picker worker; invalidates on relevant changes. |
+| `engine/.../UsageHistory.java` | Keeps its original serialized map while adding a transient date index and bounded immutable summary cache. |
+| `engine/src/test/java/app/socialpause/engine/OptimizationTests.java` | Deterministic revision, snapshot, cache, scheduling and original 0.7.1 fixture checks. |
+| `scripts/verify-runtime.py` and `scripts/test-runtime-wrapper.py` | Opt-in emulator runner plus unit tests that reject failed/missing instrumentation results even when ADB succeeds. |
+| `scripts/measure-performance.py` and `engine/src/benchmark/java/SocialPausePerf.java` | Synthetic, repeatable JVM baseline comparisons; output stays local. |
+| `docs/PERFORMANCE.md` | Measured work/CPU/allocation changes, retained costs and limits. |
+| `.github/release-notes/v0.7.2.md` | Release notes for the performance maintenance update. |

@@ -44,10 +44,10 @@ This checklist concerns accidental publication of local information. It is not a
 
 ## GitHub build and test pipeline
 
-`.github/workflows/ci.yml` runs on pushes to `main`, `v*` tags, pull requests targeting `main`, and manual runs from Actions.
+`.github/workflows/ci.yml` runs on pushes to `main`, version tags such as `0.7.2` or `v0.7.2`, pull requests targeting `main`, and manual runs from Actions.
 
 1. The timing jobs compile with Java 17 source compatibility and run the complete scenario/reference-model suite on JDK 17 and 21. The console logs are uploaded even when a test fails.
-2. Once both timing jobs pass, the Android job validates the Gradle wrapper and explicitly sets up Android command-line tools, SDK 36 and Build-Tools 36.0.0, then builds the debug APK and runs Android lint on JDK 21. It does not rely on `sdkmanager` already being on the runner PATH.
+2. Once both timing jobs pass, the Android job validates the Gradle wrapper and explicitly sets up Android command-line tools, SDK 36 and Build-Tools 36.0.0, then builds both application and instrumentation APKs and runs Android lint on JDK 21. It does not rely on `sdkmanager` already being on the runner PATH.
 3. Build/lint reports are retained for 14 days; the disposable CI APK is retained for 7 days. A tag build fails if its name does not match `versionName`.
 
 Actions are pinned to full verified commit SHAs. Tokens have read-only repository permission; pull requests receive no signing material. Only pushes to `main` write the Gradle cache. Updating action versions is a reviewed workflow change.
@@ -60,15 +60,15 @@ The GitHub release uses the existing personal debug signing identity, not a newl
 
 From the repository root:
 
-1. Update `versionName` and increment `versionCode` for an app update. This release is 0.7.1/code 10.
-2. Add reviewed notes at `.github/release-notes/vX.Y.Z.md`. Commit the source, workflows and notes; the packaging helper requires a clean tree.
+1. Update `versionName` and increment `versionCode` for an app update. This release is 0.7.2/code 11.
+2. Add reviewed notes at `.github/release-notes/vX.Y.Z.md`. Keep the notes filename v-prefixed regardless of the tag style. The helper accepts both `X.Y.Z` and `vX.Y.Z` tags. Commit the source, workflows and notes; the packaging helper requires a clean tree.
 3. Use the same complete JDK and SDK as the Android Studio guide. Run:
 
 ```sh
-python3 scripts/package-release.py v0.7.1
+python3 scripts/package-release.py 0.7.2
 ```
 
-The helper runs `scripts/verify.sh` and rejects a missing original key, mismatched version/certificate, changed source during the build, or an existing tag pointing elsewhere. It packages into `artifacts/releases/v0.7.1/`:
+The helper runs `scripts/verify.sh` and rejects a missing original key, mismatched version/certificate, changed source during the build, or an existing tag pointing elsewhere. It packages into `artifacts/releases/0.7.2/`:
 
 - `SocialPause.apk`: verified APK using the original signer.
 - `SocialPause-source.zip`: source from the exact Git commit, with no ignored local files.
@@ -78,7 +78,7 @@ The helper runs `scripts/verify.sh` and rejects a missing original key, mismatch
 `build.log` remains local for troubleshooting; it is not a release asset. Validate the checksums on macOS with:
 
 ```sh
-cd artifacts/releases/v0.7.1
+cd artifacts/releases/0.7.2
 shasum -a 256 -c SHA256SUMS.txt
 ```
 
@@ -94,28 +94,28 @@ From the repository root, push the reviewed commit and wait for **Build and test
 
 ```sh
 git push origin main
-git tag -a v0.7.1 -m 'SocialPause 0.7.1'
-git push origin v0.7.1
-gh run list --workflow ci.yml --branch v0.7.1
+git tag -a 0.7.2 -m 'SocialPause 0.7.2'
+git push origin 0.7.2
+gh run list --workflow ci.yml --branch 0.7.2
 ```
 
 Use `gh run watch RUN_ID --exit-status` for the tag run shown above. After it passes, create a draft with only the four release assets:
 
 ```sh
-gh release create v0.7.1 --verify-tag --draft \
+gh release create 0.7.2 --verify-tag --draft \
   --repo kroos47/SocialPause \
-  --title 'SocialPause 0.7.1 — Live countdown dismissal recovery' \
-  --notes-file .github/release-notes/v0.7.1.md \
-  artifacts/releases/v0.7.1/SocialPause.apk \
-  artifacts/releases/v0.7.1/SocialPause-source.zip \
-  artifacts/releases/v0.7.1/BUILD-INFO.txt \
-  artifacts/releases/v0.7.1/SHA256SUMS.txt
+  --title 'SocialPause 0.7.2 — Performance maintenance' \
+  --notes-file .github/release-notes/v0.7.2.md \
+  artifacts/releases/0.7.2/SocialPause.apk \
+  artifacts/releases/0.7.2/SocialPause-source.zip \
+  artifacts/releases/0.7.2/BUILD-INFO.txt \
+  artifacts/releases/0.7.2/SHA256SUMS.txt
 ```
 
 Review the draft's tag and assets, then publish:
 
 ```sh
-gh release edit v0.7.1 --repo kroos47/SocialPause --draft=false --latest
+gh release edit 0.7.2 --repo kroos47/SocialPause --draft=false --latest
 ```
 
 If a tag/release already exists, inspect it before proceeding. Do not force-update a published tag or overwrite released assets silently. For later versions substitute the new version consistently. GitHub provides its own source snapshots too; the attached ZIP and build information make the APK's exact source commit explicit.

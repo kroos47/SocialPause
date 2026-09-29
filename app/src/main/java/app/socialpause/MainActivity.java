@@ -4,7 +4,6 @@ import android.Manifest;
 import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
-import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.*;
 import android.provider.Settings;
@@ -15,11 +14,14 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import app.socialpause.engine.RulesEngine;
+import app.socialpause.engine.RulesSnapshot;
+import app.socialpause.engine.UsageHistory;
 
 /** Three-tab native UI. All allowance decisions remain in the timing engine. */
 public final class MainActivity extends Activity {
     private AppController controller;
     private Design d;
+    private RulesSnapshot snapshot;
     private LinearLayout root, content, navigation;
     private ScrollView scroll;
     private int tab;
@@ -34,7 +36,6 @@ public final class MainActivity extends Activity {
     private Dialog editorDialog;
     private int appPickerGeneration;
     private AlertDialog appPickerDialog;
-    private final Map<String,String> appLabels = new HashMap<>();
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
         if(event.getActionMasked()==MotionEvent.ACTION_DOWN){touchSelection=selectedDay;touchX=event.getRawX();touchY=event.getRawY();moved=false;}
         if(event.getActionMasked()==MotionEvent.ACTION_MOVE && Math.hypot(event.getRawX()-touchX,event.getRawY()-touchY)>ViewConfiguration.get(this).getScaledTouchSlop())moved=true;
@@ -47,7 +48,7 @@ public final class MainActivity extends Activity {
     private final List<Runnable> bindings = new ArrayList<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
-        @Override public void run() { controller.refresh(); render(); handler.postDelayed(this, 1000); }
+        @Override public void run() { render(); handler.postDelayed(this, 1000); }
     };
     @Override public void onCreate(Bundle saved) {
         Appearance.apply(this);
@@ -66,21 +67,33 @@ public final class MainActivity extends Activity {
         });
         getWindow().getInsetsController().setSystemBarsAppearance(d.dark ? 0 : WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
                 WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
-        controller.refresh(); render();
+        render();
         if(saved!=null){int restoredY=saved.getInt("scrollY");scroll.post(()->scroll.scrollTo(0,restoredY));}
     }
     @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); state.putInt("tab",tab); state.putBoolean("week",week); state.putInt("scrollY",scroll.getScrollY()); if(selectedDay!=null)state.putString("selectedDay",selectedDay.toString()); }
     private RulesEngine e() { return controller.engine; }
-    private String appLabel(String pkg) { return appLabels.computeIfAbsent(pkg,key -> AppController.label(this,key)); }
+    private String appLabel(String pkg) { return AppController.label(this,pkg); }
     private void change(Runnable action) {
-        try { action.run(); controller.refresh(); structure=""; render(); }
+        try { action.run(); structure=""; render(); }
         catch (IllegalArgumentException | IllegalStateException ex) { structure=""; render(); message(ex.getMessage()); }
     }
-    private RulesEngine.Mode mode() { return e().mode(AppController.wall(),AppController.elapsed()); }
+    private RulesEngine.Mode mode() { return snapshot.mode(); }
     private TextView text(String value,int size,int color,boolean bold) { return d.text(value,size,color,bold); }
     private void line(String value,int size,int color,boolean bold,int top) { d.add(content,text(value,size,color,bold),top); }
     private void bind(Runnable runnable) { bindings.add(runnable); runnable.run(); }
+    private void bindHistory(Runnable runnable) {
+        bindings.add(new Runnable() {
+            private UsageHistory previous;
+            private long revision=-1, labels=-1;
+            @Override public void run() {
+                UsageHistory history=e().history();
+                if(previous==history && revision==history.revision() && labels==ApplicationLabels.revision(MainActivity.this))return;
+                previous=history;revision=history.revision();labels=ApplicationLabels.revision(MainActivity.this);runnable.run();
+            }
+        });
+    }
     private void render() {
+        snapshot=controller.snapshot();
         LocalDate monday=LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
         if(selectedDay!=null && (selectedDay.isBefore(monday)||selectedDay.isAfter(monday.plusDays(6))))selectedDay=null;
         String key = e().timerMode()+":"+(tab==2?"settings":e().sharedLimit())+":"+e().isManualLunch()+":"+e().manualLunchUsedToday(AppController.wall())+":"+tab+":"+week+":"+selectedDay+":"+mode()+":"+controller.connected+":"+e().selected+":"+e().pendingAt()+":"+e().pendingLunchMinute()+":"+e().pendingLunchEnabled()+":"+e().quiet(AppController.wall())+":"+e().lunchEnabled+":"+e().lunchMinute+":"+e().sleepEnabled+":"+e().sleepStart+":"+e().sleepEnd+":"+LocalDate.now();
@@ -123,9 +136,9 @@ public final class MainActivity extends Activity {
         if(largeHeader){LinearLayout.LayoutParams controlsSize=new LinearLayout.LayoutParams(controlWidth,-2);controlsSize.gravity=Gravity.END;controlsSize.topMargin=d.dp(12);title.addView(controls,controlsSize);}else title.addView(controls);content.addView(title);
         TextView stopHint=text("",13,d.muted,false);d.add(content,stopHint,12);
         bind(()->{
-            long remaining=e().stopLockRemaining(AppController.elapsed());
+            long remaining=snapshot.stopRemaining();
             boolean locked=e().running&&remaining>0;
-            toggle.setEnabled(e().running?e().canStop(AppController.elapsed()):controller.connected);
+            toggle.setEnabled(e().running?snapshot.stopRemaining()==0:controller.connected);
             toggle.setAlpha(toggle.isEnabled()?1f:.45f);
             toggle.setStateDescription(locked?"Locked for "+AppController.stopDuration(remaining):e().running?"Available":controller.connected?"Ready":"App monitoring required");
             stopHint.setText(!e().running?"Starting locks Stop for 6 hours.":locked?"Stop available in "+AppController.stopDuration(remaining):"Stop is available. Monitoring continues until you stop it.");
@@ -139,8 +152,8 @@ public final class MainActivity extends Activity {
             String heading,detail;
             if(!controller.connected){heading="Monitoring is off";detail="Enable App monitoring in Settings.";}
             else if(mode()==RulesEngine.Mode.STOPPED){heading="Tracking stopped";detail="Social apps are unrestricted until you Start.";}
-            else if(mode()==RulesEngine.Mode.LUNCH){heading="Enjoy your lunch break";detail="Unrestricted until "+AppController.at(wall+e().countdown(wall,elapsed))+".";}
-            else if(mode()==RulesEngine.Mode.LUNCH_COOLDOWN){heading="A little space after lunch";detail=allAppsHaveNoAllowance()?"Your apps have no allowance after the lunch block.":returningApps()+" return at "+AppController.at(wall+e().countdown(wall,elapsed))+".";}
+            else if(mode()==RulesEngine.Mode.LUNCH){heading="Enjoy your lunch break";detail="Unrestricted until "+AppController.at(wall+snapshot.countdown())+".";}
+            else if(mode()==RulesEngine.Mode.LUNCH_COOLDOWN){heading="A little space after lunch";detail=allAppsHaveNoAllowance()?"Your apps have no allowance after the lunch block.":returningApps()+" return at "+AppController.at(wall+snapshot.countdown())+".";}
             else if(mode()==RulesEngine.Mode.SHARED_COOLDOWN){heading="Shared allowance complete";detail=returningApps()+" return at "+AppController.at(wall+e().sharedCooldownRemaining(elapsed))+".";}
             else if(e().quiet(wall)){heading="Sleep Time is on";detail="Notifications hidden. App limits stay active.";}
             else if(available==0){heading=allAppsHaveNoAllowance()?"No app allowance":"Time for a breather";detail=allAppsHaveNoAllowance()?"Stop monitoring to set app limits in Settings.":"Apps with an allowance return after their cooldowns.";}
@@ -163,7 +176,7 @@ public final class MainActivity extends Activity {
             boolean value=i==1;RadioButton button=new RadioButton(this);button.setId(View.generateViewId());button.setButtonDrawable((android.graphics.drawable.Drawable)null);
             button.setText(value?R.string.shared_mode:R.string.individual_mode);button.setTextSize(14);button.setGravity(Gravity.CENTER);button.setPadding(d.dp(6),d.dp(10),d.dp(6),d.dp(10));button.setMinimumHeight(d.dp(48));
             button.setChecked(value==shared);button.setTextColor(value==shared?d.onAccent:d.ink);button.setBackground(d.shape(value==shared?d.accent:d.line,22));
-            button.setEnabled(!e().running);button.setOnClickListener(v->change(()->e().setTimerMode(value?RulesEngine.TimerMode.SHARED:RulesEngine.TimerMode.INDIVIDUAL)));
+            button.setEnabled(!e().running);button.setOnClickListener(v->change(()->controller.setTimerMode(value?RulesEngine.TimerMode.SHARED:RulesEngine.TimerMode.INDIVIDUAL)));
             modes.addView(button,new RadioGroup.LayoutParams(0,-2,1));
         }
         d.add(card,modes,14);
@@ -178,9 +191,9 @@ public final class MainActivity extends Activity {
         bind(()->{
             long wall=AppController.wall(),elapsed=AppController.elapsed();RulesEngine.Mode current=mode();
             boolean lunchCooldown=current==RulesEngine.Mode.LUNCH_COOLDOWN;
-            long cooldown=lunchCooldown?e().countdown(wall,elapsed):e().running?e().sharedCooldownRemaining(elapsed):0;
+            long cooldown=lunchCooldown?snapshot.countdown():e().running?e().sharedCooldownRemaining(elapsed):0;
             label.setText(cooldown>0?(lunchCooldown?"AFTER-LUNCH COOLDOWN":"SHARED COOLDOWN REMAINING"):"SHARED TIME LEFT");
-            remaining.setText(AppController.duration(cooldown>0?cooldown:e().sharedRemaining()));
+            remaining.setText(AppController.duration(cooldown>0?cooldown:snapshot.sharedRemaining()));
             note.setText(cooldown>0?(allAppsHaveNoAllowance()?"Your apps still have no allowance after this block.":returningApps()+" return at "+AppController.at(wall+cooldown)+"."):
                     allAppsHaveNoAllowance()?"Set an app allowance in Settings to use shared time.":"of "+e().sharedLimit()/RulesEngine.MINUTE+" combined minutes"+(!e().running?" · monitoring stopped":current==RulesEngine.Mode.LUNCH?" · paused for lunch":e().focused()==null?" · paused":""));
         });
@@ -199,9 +212,9 @@ public final class MainActivity extends Activity {
             long wall=AppController.wall(),elapsed=AppController.elapsed();RulesEngine.Mode current=mode();
             boolean lunch=current==RulesEngine.Mode.LUNCH,afterLunch=current==RulesEngine.Mode.LUNCH_COOLDOWN,used=e().manualLunchUsedToday(wall);
             phase.setText(lunch?(e().isManualLunch()?"Manual lunch":"Scheduled lunch"):afterLunch?"After-lunch cooldown":"Your lunch, your timing");
-            counter.setVisibility(lunch||afterLunch?View.VISIBLE:View.GONE);counter.setText(AppController.duration(e().countdown(wall,elapsed)));
-            detail.setText(lunch?"Unrestricted until "+AppController.at(wall+e().countdown(wall,elapsed))+". Stop lunch starts a full 60-minute cooldown.":
-                    afterLunch?(allAppsHaveNoAllowance()?"The lunch block ends at "+AppController.at(wall+e().countdown(wall,elapsed))+". Your apps still have no allowance.":returningApps()+" return at "+AppController.at(wall+e().countdown(wall,elapsed))+"."):"A manual start can replace the current lunch or cooldown immediately.");
+            counter.setVisibility(lunch||afterLunch?View.VISIBLE:View.GONE);counter.setText(AppController.duration(snapshot.countdown()));
+            detail.setText(lunch?"Unrestricted until "+AppController.at(wall+snapshot.countdown())+". Stop lunch starts a full 60-minute cooldown.":
+                    afterLunch?(allAppsHaveNoAllowance()?"The lunch block ends at "+AppController.at(wall+snapshot.countdown())+". Your apps still have no allowance.":returningApps()+" return at "+AppController.at(wall+snapshot.countdown())+"."):"A manual start can replace the current lunch or cooldown immediately.");
             long next=e().nextScheduledLunch(wall);
             schedule.setText(next>0?"Next scheduled lunch: "+scheduleTime(next,wall):"Automatic lunch is off. Set a start time in Settings.");
             availability.setText(used?"Manual lunch used today.":!e().running||!controller.connected?"Start monitoring with App monitoring connected to use lunch.":"1 manual start available today.");
@@ -226,9 +239,9 @@ public final class MainActivity extends Activity {
         if(largeText)d.add(state,detail,8);else{detail.setPadding(d.dp(10),0,0,0);d.weighted(state,detail);}d.add(card,state,16);
         Design.UsageBar bar=d.new UsageBar();LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,d.dp(4));lp.topMargin=d.dp(12);card.addView(bar,lp);d.add(content,card,12);
         bind(()->{
-            long wall=AppController.wall(),elapsed=AppController.elapsed(),cooldown=e().cooldownRemaining(pkg,wall,elapsed);
+            long wall=AppController.wall(),elapsed=AppController.elapsed(),cooldown=snapshot.apps().get(pkg).cooldown(snapshot.elapsed());
             boolean free=!e().running||mode()==RulesEngine.Mode.LUNCH,active=pkg.equals(e().focused()),zero=e().noAllowance(pkg),cooling=cooldown>0&&!zero;
-            String remaining=free?"Free":AppController.duration(cooling?cooldown:e().remaining(pkg));left.setText(remaining);
+            String remaining=free?"Free":AppController.duration(cooling?cooldown:snapshot.apps().get(pkg).remaining());left.setText(remaining);
             caption.setText(free?"Unrestricted":zero?getString(R.string.no_allowance):cooling?"cooldown left":"usage left");
             String stateLabel=zero?getString(R.string.no_allowance):cooling?"Cooldown":active?"In use":e().used(pkg)>0?"Paused":"Available";
             pill.setText(stateLabel);pill.setBackground(d.shape(cooling?d.warning:d.mint,16));pill.setTextColor(cooling?d.warningInk:d.ink);
@@ -250,11 +263,11 @@ public final class MainActivity extends Activity {
             LinearLayout totalRow=d.row();TextView total=text("",40,d.onAccent,false);d.weighted(totalRow,total);
             TextView period=text(selectedDay==null?monday.format(DateTimeFormatter.ofPattern("d MMM"))+" – "+end.format(DateTimeFormatter.ofPattern("d MMM")):selectedDay.format(DateTimeFormatter.ofPattern("EEE, d MMM")),12,d.onAccent,false);period.setGravity(Gravity.END);totalRow.addView(period);d.add(hero,totalRow,14);d.add(content,hero,20);
             if(selectedDay!=null){hero.setFocusable(true);hero.setContentDescription("Selected day summary. Tap to show weekly summary.");hero.setOnClickListener(v->{selectedDay=null;structure="";render();});}
-            bind(()->total.setText(Design.usage(e().history().total(start,end))));
+            bindHistory(()->total.setText(Design.usage(e().history().total(start,end))));
             LinearLayout chartHeading=d.row();d.weighted(chartHeading,text("Your week, at a glance",20,d.ink,true));chartHeading.addView(text("Minutes",12,d.muted,false));d.add(content,chartHeading,24);
             Design.Chart chart=d.new Chart(day->{selectedDay=day.equals(selectedDay)?null:day;structure="";render();});weeklyChart=chart;
             LinearLayout.LayoutParams chartLp=new LinearLayout.LayoutParams(-1,d.dp(184));chartLp.topMargin=d.dp(12);content.addView(chart,chartLp);
-            bind(()->{java.util.List<Map<String,Long>> days=new ArrayList<>();for(int i=0;i<7;i++)days.add(e().history().byApp(monday.plusDays(i),monday.plusDays(i)));chart.data(days,monday,selectedDay);});
+            bindHistory(()->{var summary=e().history().summary(monday,monday.plusDays(6));java.util.List<Map<String,Long>> days=new ArrayList<>();for(int i=0;i<7;i++)days.add(summary.days().getOrDefault(monday.plusDays(i),Map.of()));chart.data(days,monday,selectedDay);});
             Set<String> legendApps=new LinkedHashSet<>(e().selected);legendApps.addAll(e().history().byApp(monday,monday.plusDays(6)).keySet());
             HorizontalScrollView legendScroll=new HorizontalScrollView(this);legendScroll.setHorizontalScrollBarEnabled(false);LinearLayout legend=d.row();
             for(String pkg:legendApps){LinearLayout row=d.row();View swatch=new View(this);swatch.setBackground(d.shape(d.appColor(pkg),4));row.addView(swatch,new LinearLayout.LayoutParams(d.dp(8),d.dp(8)));TextView name=text(appLabel(pkg),12,d.muted,false);name.setPadding(d.dp(6),d.dp(6),d.dp(14),d.dp(6));row.addView(name);legend.addView(row);}legendScroll.addView(legend);d.add(content,legendScroll,8);
@@ -263,7 +276,7 @@ public final class MainActivity extends Activity {
         }else{line(today.format(DateTimeFormatter.ofPattern("EEEE, d MMM")),16,d.ink,true,24);line("Time used today",13,d.muted,false,6);}
         LinearLayout appRows=d.column();d.add(content,appRows,12);TextView empty=text("",13,d.muted,false);d.add(content,empty,12);
         final String[] previous={""};final Map<String,TextView> counters=new HashMap<>();
-        bind(()->{
+        bindHistory(()->{
             var apps=e().history().byApp(start,end);long ms=e().history().total(start,end);empty.setVisibility(ms==0?View.VISIBLE:View.GONE);empty.setText(R.string.no_usage);
             Set<String> packages=new LinkedHashSet<>(e().selected);packages.addAll(apps.keySet());
             if(!previous[0].equals(packages.toString())){
@@ -297,8 +310,8 @@ public final class MainActivity extends Activity {
         line("YOUR APPS",12,d.muted,true,28);
         StringJoiner selected=new StringJoiner(", ");for(String pkg:e().selected)selected.add(appLabel(pkg));settingRow("chart","Selected apps",selected.toString(),this::chooseApps);
         TextView stopAvailability=text("",12,d.muted,false);d.add(content,stopAvailability,12);
-        bind(()->stopAvailability.setText(e().running&&e().stopLockRemaining(AppController.elapsed())>0?
-                "Stop available in "+AppController.stopDuration(e().stopLockRemaining(AppController.elapsed()))+" on Home.":
+        bind(()->stopAvailability.setText(e().running&&snapshot.stopRemaining()>0?
+                "Stop available in "+AppController.stopDuration(snapshot.stopRemaining())+" on Home.":
                 e().running?"Use Stop on Home when you need free access.":"Starting locks Stop for 6 hours. Lunch controls remain available."));
         line("APP SETUP",12,d.muted,true,30);
         settingRow("settings","App monitoring",controller.connected?"Connected":"Required · tap to enable",this::accessibilityDialog);
@@ -326,7 +339,7 @@ public final class MainActivity extends Activity {
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
             @Override public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){
                 if(!fromUser)return;
-                try{e().setAppLimit(pkg,progress*RulesEngine.MINUTE);controller.refresh();value.setText(AppController.duration(e().limit(pkg)));}
+                try{controller.setAppLimit(pkg,progress*RulesEngine.MINUTE);value.setText(AppController.duration(e().limit(pkg)));}
                 catch(IllegalStateException|IllegalArgumentException ex){bar.setProgress((int)(e().limit(pkg)/RulesEngine.MINUTE));message(ex.getMessage());}
             }
             @Override public void onStartTrackingTouch(SeekBar bar){}
@@ -357,7 +370,7 @@ public final class MainActivity extends Activity {
                 List<String> sorted=new ArrayList<>(packages);sorted.sort(Comparator.comparing((String pkg)->labels.get(pkg),String.CASE_INSENSITIVE_ORDER).thenComparing(pkg->pkg));
                 runOnUiThread(()->{
                     if(!isCurrentAppPicker(generation))return;
-                    appLabels.putAll(labels);loading.setOnDismissListener(null);loading.dismiss();
+                    loading.setOnDismissListener(null);loading.dismiss();
                     showAppPicker(generation,sorted,labels,original);
                 });
             } catch(RuntimeException ex) {
@@ -385,7 +398,7 @@ public final class MainActivity extends Activity {
             if(chosen.isEmpty()){error.setText(R.string.select_at_least_one_app);error.setVisibility(View.VISIBLE);return;}
             Button save=dialog.getButton(AlertDialog.BUTTON_POSITIVE);save.setEnabled(false);
             try {
-                e().select(new LinkedHashSet<>(chosen));controller.refresh();dialog.dismiss();structure="";render();
+                controller.selectApps(new LinkedHashSet<>(chosen));dialog.dismiss();structure="";render();
             } catch(IllegalArgumentException|IllegalStateException ex) {
                 error.setText(ex.getMessage());error.setVisibility(View.VISIBLE);save.setEnabled(true);
             }
@@ -421,7 +434,7 @@ public final class MainActivity extends Activity {
         Button save=d.button(getString(R.string.save),true,()->{
             hour.clearFocus();minutes.clearFocus();half.clearFocus();
             int selectedMinute=(hour.getValue()%12)*60+minutes.getValue()+(half.getValue()%2)*720;
-            try{e().lunch(true,selectedMinute,AppController.wall(),AppController.elapsed());controller.refresh();dialog.dismiss();}
+            try{controller.setLunch(true,selectedMinute);dialog.dismiss();}
             catch(IllegalArgumentException|IllegalStateException ex){message(ex.getMessage());}
         });
         actions.addView(cancel,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams saveSize=new LinearLayout.LayoutParams(0,-2,1);saveSize.leftMargin=d.dp(12);actions.addView(save,saveSize);d.add(panel,actions,16);
@@ -465,7 +478,7 @@ public final class MainActivity extends Activity {
         slider.setEnabled(editable);slider.setAlpha(editable?1f:.45f);slider.setContentDescription("Shared allowance, minutes");d.add(panel,slider,24);
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
             @Override public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){if(!fromUser)return;
-                try{e().setSharedLimit(progress*RulesEngine.MINUTE);controller.refresh();value.setText(hoursMinutes(e().configuredSharedLimit()));}
+                try{controller.setSharedLimit(progress*RulesEngine.MINUTE);value.setText(hoursMinutes(e().configuredSharedLimit()));}
                 catch(IllegalArgumentException|IllegalStateException ex){bar.setProgress((int)(e().configuredSharedLimit()/RulesEngine.MINUTE));message(ex.getMessage());}
             }
             @Override public void onStartTrackingTouch(SeekBar bar){}
@@ -480,13 +493,13 @@ public final class MainActivity extends Activity {
     }
     private void sleepDialog() {
         new AlertDialog.Builder(this).setTitle("Sleep Time").setMessage("Hide timer notifications while limits stay active. Choose a start, then an end time.")
-                .setNegativeButton("Cancel",null).setNeutralButton("Disable",(dialog,which)->{e().sleep(false,e().sleepStart,e().sleepEnd);controller.refresh();render();})
-                .setPositiveButton("Set times",(dialog,which)->pickTime(e().sleepStart,start->pickTime(e().sleepEnd,end->{try{e().sleep(true,start,end);controller.refresh();render();}catch(IllegalArgumentException ex){message(ex.getMessage());}}))).show();
+                .setNegativeButton("Cancel",null).setNeutralButton("Disable",(dialog,which)->{controller.setSleep(false,e().sleepStart,e().sleepEnd);render();})
+                .setPositiveButton("Set times",(dialog,which)->pickTime(e().sleepStart,start->pickTime(e().sleepEnd,end->{try{controller.setSleep(true,start,end);render();}catch(IllegalArgumentException ex){message(ex.getMessage());}}))).show();
     }
     private void pickTime(int minute,java.util.function.IntConsumer done){new TimePickerDialog(this,(view,h,m)->done.accept(h*60+m),minute/60,minute%60,true).show();}
     private void message(String value){new AlertDialog.Builder(this).setMessage(value).setPositiveButton("OK",null).show();}
     private void open(Intent intent){try{startActivity(intent);}catch(ActivityNotFoundException ex){message("This settings page is unavailable. Open this app's settings from your phone Settings app.");}}
-    @Override protected void onResume(){super.onResume();structure="";handler.removeCallbacks(tick);handler.post(tick);}
+    @Override protected void onResume(){super.onResume();controller.resumed();structure="";handler.removeCallbacks(tick);handler.post(tick);}
     @Override protected void onPause(){handler.removeCallbacks(tick);super.onPause();}
     @Override protected void onDestroy(){
         handler.removeCallbacks(tick);appPickerGeneration++;appPickerOpen=false;

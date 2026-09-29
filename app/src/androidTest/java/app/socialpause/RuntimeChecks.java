@@ -53,11 +53,14 @@ public final class RuntimeChecks extends Instrumentation {
                 main(()->notifications=(TimerNotifications)field(controller,"notifications"));
                 if(Set.of("usage","cooldown","lunch").contains(phase)) {
                     seed(phase);
+                } else if(phase.equals("polling")) {
+                    pollingChecks();
+                    main(()->{controller.engine.systemStop(AppController.wall(),AppController.elapsed());controller.refresh();});
                 } else if(phase.equals("drawer")) {
                     drawerChecks();
                     main(()->{controller.engine.systemStop(AppController.wall(),AppController.elapsed());controller.refresh();});
                 } else {
-                    require(phase.equals("checks")||phase.equals("ui"),"Unknown phase "+phase);
+                    require(phase.equals("checks")||phase.equals("ui")||phase.equals("optimization"),"Unknown phase "+phase);
                     // Isolate synthetic app focus from the emulator launcher. Permission remains
                     // enabled; external seed phases retain the actual service polling behavior.
                     main(()->{
@@ -66,7 +69,7 @@ public final class RuntimeChecks extends Instrumentation {
                         invoke(owner,"suspendMonitoring");
                     });
                     if(phase.equals("checks"))notificationChecks();
-                    uiChecks();
+                    if(phase.equals("optimization"))optimizationChecks();else uiChecks();
                     main(()->{controller.engine.systemStop(AppController.wall(),AppController.elapsed());controller.refresh();});
                 }
             }
@@ -302,6 +305,100 @@ public final class RuntimeChecks extends Instrumentation {
         for(int i=0;i<root.getChildCount();i++){var found=findNode(root.getChild(i),text,exact);if(found!=null)return found;}return null;
     }
 
+    private void optimizationChecks() throws Exception {
+        check("unchanged refreshes retain the checkpoint and ordinary notification instance",()->{
+            RulesEngine e=fresh(TimerMode.INDIVIDUAL,true);e.history();install(e);
+            main(()->{
+                String saved=target.getSharedPreferences("socialpause-v1",Context.MODE_PRIVATE).getString("engine",null);
+                Object signature=field(notifications,"previous");long revision=e.revision();
+                for(int i=0;i<100;i++){controller.snapshot();controller.refresh();}
+                require(revision==e.revision(),"Read-only idle refresh dirtied state");
+                require(saved==target.getSharedPreferences("socialpause-v1",Context.MODE_PRIVATE).getString("engine",null),"Unchanged state was serialized again");
+                require(signature==field(notifications,"previous"),"Unchanged notification was rebuilt");
+            });
+        });
+        check("Sleep Time hides once and a visible transition rebuilds the notification",()->{
+            main(()->{controller.setSleep(true,0,1439);require(Boolean.TRUE.equals(field(notifications,"hidden")),"Expected hidden state");
+                for(int i=0;i<100;i++)controller.refresh();
+                require(target.getSystemService(NotificationManager.class).getActiveNotifications().length==0,"Hidden notification remained");
+                controller.setSleep(false,0,1439);require(Boolean.FALSE.equals(field(notifications,"hidden")),"Visible state was not restored");});
+            awaitNotification(n->n.extras.getCharSequence(Notification.EXTRA_TITLE)!=null);
+        });
+        install(fresh(TimerMode.INDIVIDUAL,false));
+        activity=(MainActivity)startActivitySync(new Intent(target,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
+        check("Insights retains chart data across ticks and day selection toggles back",()->{
+            main(()->{
+                controller.engine.history().record(X,System.currentTimeMillis(),MINUTE,ZoneId.systemDefault());controller.refresh();
+                set(activity,"tab",1);set(activity,"structure","");invoke(activity,"render");
+                Object chart=field(activity,"weeklyChart");Object[] bars=(Object[])field(chart,"bars");Object values=field(bars[0],"values");
+                for(int i=0;i<20;i++)invoke(activity,"render");
+                require(values==field(bars[0],"values"),"Unchanged chart rebuilt its data");
+                int today=LocalDate.now().getDayOfWeek().getValue()-1;((View)bars[today]).performClick();require(field(activity,"selectedDay")!=null,"Day did not select");
+                Object[] updated=(Object[])field(field(activity,"weeklyChart"),"bars");((View)updated[today]).performClick();require(field(activity,"selectedDay")==null,"Same day did not restore week");
+                controller.engine.history().record(I,System.currentTimeMillis(),MINUTE,ZoneId.systemDefault());invoke(activity,"render");
+                require(values!=field(((Object[])field(field(activity,"weeklyChart"),"bars"))[0],"values"),"New history did not refresh chart");
+            });
+        });
+        check("repeated app-picker taps create one draft and Save updates the selected apps",()->{
+            main(()->{invoke(activity,"chooseApps");int generation=(int)field(activity,"appPickerGeneration");invoke(activity,"chooseApps");require(generation==(int)field(activity,"appPickerGeneration"),"Second tap opened another picker");});
+            eventually(()->onMain(()->{try{AlertDialog d=(AlertDialog)field(activity,"appPickerDialog");return d!=null&&d.getListView()!=null;}catch(Exception ex){throw new RuntimeException(ex);}}),5_000,"App picker did not finish loading");
+            main(()->{
+                AlertDialog dialog=(AlertDialog)field(activity,"appPickerDialog");ListView list=dialog.getListView();int index=-1;
+                for(int i=0;i<list.getCount();i++)if("Clock".equals(String.valueOf(list.getItemAtPosition(i))))index=i;
+                require(index>=0,"Clock app missing from picker");list.performItemClick(list.getChildAt(index),index,list.getItemIdAtPosition(index));
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();require(!dialog.isShowing(),"Save did not dismiss the picker");
+                require(controller.engine.selected.contains("com.android.deskclock"),"Added app did not save");
+            });
+        });
+        eventually(()->onMain(()->{try{return field(activity,"appPickerDialog")==null;}catch(Exception ex){throw new RuntimeException(ex);}}),3_000,"Picker did not finish dismissing");
+        check("empty app selection stays in the same picker with an error",()->{
+            main(()->invoke(activity,"chooseApps"));
+            eventually(()->onMain(()->{try{AlertDialog d=(AlertDialog)field(activity,"appPickerDialog");return d!=null&&d.getListView()!=null;}catch(Exception ex){throw new RuntimeException(ex);}}),5_000,"Picker did not reopen");
+            main(()->{
+                Set<String> selected=new LinkedHashSet<>(controller.engine.selected);AlertDialog dialog=(AlertDialog)field(activity,"appPickerDialog");ListView list=dialog.getListView();
+                for(int i=0;i<list.getCount();i++)if(list.isItemChecked(i))list.performItemClick(list.getChildAt(i),i,list.getItemIdAtPosition(i));
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();require(dialog.isShowing(),"Empty selection dismissed the picker");
+                require(selected.equals(controller.engine.selected),"Empty selection was saved");
+                require(find(dialog.getWindow().getDecorView(),target.getString(R.string.select_at_least_one_app),false)!=null,"Empty selection error missing");
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
+            });
+        });
+        check("picker Cancel and lunch backdrop leave the original saved configuration",()->{
+            main(()->invoke(activity,"chooseApps"));
+            eventually(()->onMain(()->{try{AlertDialog d=(AlertDialog)field(activity,"appPickerDialog");return d!=null&&d.getListView()!=null;}catch(Exception ex){throw new RuntimeException(ex);}}),5_000,"Picker did not reopen");
+            main(()->{
+                Set<String> selected=new LinkedHashSet<>(controller.engine.selected);AlertDialog dialog=(AlertDialog)field(activity,"appPickerDialog");
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();require(selected.equals(controller.engine.selected),"Cancel changed apps");
+                int minute=controller.engine.lunchMinute;long pending=controller.engine.pendingAt();invoke(activity,"lunchDialog");
+                Dialog editor=(Dialog)field(activity,"editorDialog");editor.cancel();require(minute==controller.engine.lunchMinute&&pending==controller.engine.pendingAt(),"Cancelled lunch draft was saved");
+            });
+        });
+        main(()->activity.finish());waitForIdleSync();activity=null;
+    }
+    private void pollingChecks() throws Exception {
+        String clock="com.android.deskclock";shell("cmd statusbar collapse");shell("input keyevent KEYCODE_HOME");
+        RulesEngine e=fresh(TimerMode.INDIVIDUAL,false);e.select(Set.of(clock));e.start(AppController.wall(),AppController.elapsed());install(e);
+        Object owner=field(controller,"monitoringOwner");
+        check("real Home fallback is two seconds and selected app fallback is 500 ms",()->{
+            eventually(()->onMain(()->{try{return (long)field(owner,"fallbackDelay")==2000;}catch(Exception ex){throw new RuntimeException(ex);}}),5_000,"Home fallback was not two seconds");
+            shell("am start -W -n com.android.deskclock/.DeskClock");eventually(()->onMain(()->clock.equals(e.focused())),3_000,"Selected app did not enter focus");
+            main(()->require((long)field(owner,"fallbackDelay")==500,"Selected fallback was not 500 ms"));
+        });
+        check("a missed entry event is recovered by the two-second fallback",()->{
+            shell("input keyevent KEYCODE_HOME");eventually(()->onMain(()->e.focused()==null),3_000,"Home did not pause");
+            main(()->{Handler handler=(Handler)field(owner,"handler");handler.removeCallbacks((Runnable)field(owner,"pendingInspection"));set(owner,"inspectionPending",true);});
+            long before=SystemClock.elapsedRealtime();shell("am start -W -n com.android.deskclock/.DeskClock");
+            eventually(()->onMain(()->clock.equals(e.focused())),2_500,"Missed entry was not recovered within fallback tolerance");
+            require(SystemClock.elapsedRealtime()-before<3_000,"Fallback entry was too slow");main(()->set(owner,"inspectionPending",false));
+        });
+        check("screen-off uses thirty seconds and stopped monitoring removes its fallback",()->{
+            shell("input keyevent KEYCODE_SLEEP");eventually(()->onMain(()->{try{return e.focused()==null&&(long)field(owner,"fallbackDelay")==30_000;}catch(Exception ex){throw new RuntimeException(ex);}}),3_000,"Lock did not pause with screen-off schedule");
+            main(()->{e.systemStop(AppController.wall(),AppController.elapsed());controller.refresh();((SocialAccessibilityService)owner).refreshFocusedWindow();
+                Handler h=(Handler)field(owner,"handler");require(!h.hasCallbacks((Runnable)field(owner,"pulse")),"Stopped service still polls");});
+            shell("input keyevent KEYCODE_WAKEUP");shell("wm dismiss-keyguard");
+        });
+    }
+
     private void uiChecks() throws Exception {
         install(fresh(TimerMode.INDIVIDUAL,false));
         activity=(MainActivity)startActivitySync(new Intent(target,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -383,6 +480,6 @@ public final class RuntimeChecks extends Instrumentation {
         throw new AssertionError(message);
     }
     private static Object field(Object owner,String name) throws Exception { Field field=owner.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(owner); }
-    private static void set(Object owner,String name,Object value) throws Exception { Field field=owner.getClass().getDeclaredField(name);field.setAccessible(true);field.set(owner,value); }
+    private static void set(Object owner,String name,Object value) throws Exception { Field field=owner.getClass().getDeclaredField(name);field.setAccessible(true);field.set(owner,value); if(owner instanceof RulesEngine)invoke(owner,"changed"); }
     private static void invoke(Object owner,String name) throws Exception { Method method=owner.getClass().getDeclaredMethod(name);method.setAccessible(true);method.invoke(owner); }
 }

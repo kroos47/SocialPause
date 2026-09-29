@@ -16,7 +16,23 @@ final class TimerNotifications {
     private final Context context;
     private final NotificationManager manager;
     private final SharedPreferences visibility;
-    private String previous="";
+    private NotificationDisplay previous;
+    private long postedSecond = -1;
+    private Boolean hidden;
+    private boolean ticking;
+    private Design design;
+    private int configuration;
+    private long styleRevision;
+    void invalidate() { design=null; previous=null; styleRevision++; }
+    boolean needsClockTicks() { return ticking; }
+    private Design style() {
+        int config=context.getResources().getConfiguration().hashCode();
+        boolean dark=Appearance.isDark(context);
+        if(design==null || config!=configuration || design.dark!=dark) {
+            design=new Design(context); configuration=config; styleRevision++;
+        }
+        return design;
+    }
     private final NotificationDismissalPolicy.State dismissalState;
     private boolean appVisible;
     TimerNotifications(Context c) {
@@ -28,11 +44,11 @@ final class TimerNotifications {
         NotificationChannel channel=new NotificationChannel("timer","Social timers",NotificationManager.IMPORTANCE_LOW);
         channel.setSound(null,null);channel.enableVibration(false);manager.createNotificationChannel(channel);
     }
-    void newRun(){dismissalState.newRun();persistDismissal();previous="";}
+    void newRun(){dismissalState.newRun();persistDismissal();previous=null;}
     void focusVisibility(boolean visible){appVisible=visible;}
     boolean dismissed(NotificationDismissalPolicy.Dismissal event){
         if(!dismissalState.dismiss(event))return false;
-        persistDismissal();previous="";return true;
+        persistDismissal();previous=null;return true;
     }
     private void persistDismissal(){
         // Only lifecycle transitions write this small record, never the one-second timer tick.
@@ -41,7 +57,7 @@ final class TimerNotifications {
                 .putBoolean("awaiting-return",dismissalState.awaitingReturn()).commit();
     }
     private RemoteViews overview(TimerPresentation p, String title, long wall) {
-        Design d=new Design(context);RemoteViews view=new RemoteViews(context.getPackageName(),R.layout.notification_overview);
+        Design d=style();RemoteViews view=new RemoteViews(context.getPackageName(),R.layout.notification_overview);
         view.setTextViewText(R.id.overview_title,title);view.removeAllViews(R.id.timer_rows);
         for(TimerPresentation.Row row:p.rows){
             RemoteViews item=new RemoteViews(context.getPackageName(),R.layout.notification_timer_row);
@@ -62,16 +78,29 @@ final class TimerNotifications {
         long wall=AppController.wall(),elapsed=AppController.elapsed();
         TimerPresentation p=TimerPresentation.of(e,connected,wall,elapsed);
         if(p.kind==TimerPresentation.Kind.HIDDEN || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED || !manager.areNotificationsEnabled()) {
-            manager.cancel(10);dismissalState.hidden();appVisible=false;previous="";return;
+            // null is the one startup reconciliation, true means already hidden.
+            if (!Boolean.TRUE.equals(hidden)) { manager.cancel(10); dismissalState.hidden(); }
+            hidden=true; ticking=false; appVisible=false; previous=null; return;
         }
+        hidden=false;
         boolean awake=context.getSystemService(PowerManager.class).isInteractive();
-        Design d=new Design(context);
+        ticking=awake && (p.activeChip() || p.remaining>0 || p.rows.stream().anyMatch(TimerPresentation.Row::cooling));
+        long oldGeneration=dismissalState.generation();
+        boolean oldPending=dismissalState.awaitingReturn();
+        var publication=dismissalState.prepare(e.cycleId(),p,appVisible);
+        var dismissal=publication.dismissal();
+        boolean liveRequested=dismissal.liveRequested();
+        if(oldGeneration!=dismissalState.generation()||oldPending!=dismissalState.awaitingReturn())persistDismissal();
+        Design d=style();
+        NotificationDisplay key=NotificationDisplay.of(p,dismissal.generation(),awake,styleRevision+ApplicationLabels.revision(context),wall);
+        if(!publication.replace() && (key.equals(previous)
+                || (postedSecond==elapsed/1000 && key.sameSurface(previous))))return;
         String title,body;boolean overview=p.kind==TimerPresentation.Kind.OVERVIEW||p.kind==TimerPresentation.Kind.NO_ALLOWANCE||p.kind==TimerPresentation.Kind.ALL_COOLDOWN||p.kind==TimerPresentation.Kind.LUNCH_COOLDOWN||p.kind==TimerPresentation.Kind.SHARED_COOLDOWN;
         switch(p.kind) {
             case APP -> {
                 String name=AppController.label(context,p.app);
                 title=p.sharedLimiting?"Shared allowance · "+name:name;
-                body=p.sharedLimiting?p.shortCriticalText()+" shared time left · "+AppController.duration(e.remaining(p.app))+" in "+name
+                body=p.sharedLimiting?p.shortCriticalText()+" shared time left · "+AppController.duration(p.rows.stream().filter(row->row.app().equals(p.app)).findFirst().orElseThrow().remaining())+" in "+name
                         :p.shortCriticalText()+" app time left"+(p.sharedLimit>0?" · "+AppController.duration(p.sharedRemaining)+" shared":" · "+e.limit(p.app)/RulesEngine.MINUTE+" min allowance");
             }
             case LUNCH -> {title="Lunch break · unrestricted";body="Cooldown starts at "+AppController.at(wall+p.remaining)+" · Fresh allowances at "+AppController.at(wall+p.remaining+RulesEngine.COOLDOWN);}
@@ -95,14 +124,6 @@ final class TimerNotifications {
                 body=rows.toString().stripTrailing();
             }
         }
-        long oldGeneration=dismissalState.generation();
-        boolean oldPending=dismissalState.awaitingReturn();
-        var publication=dismissalState.prepare(e.cycleId(),p,appVisible);
-        var dismissal=publication.dismissal();
-        boolean liveRequested=dismissal.liveRequested();
-        if(oldGeneration!=dismissalState.generation()||oldPending!=dismissalState.awaitingReturn())persistDismissal();
-        String key=dismissal.identity()+":"+(awake?p.remaining/1000:p.remaining/60000)+":"+body+":"+awake+":"+d.dark;
-        if(key.equals(previous)&&!publication.replace())return;
         int icon=p.kind==TimerPresentation.Kind.APP && !p.sharedLimiting?Design.appIcon(p.app):R.drawable.ic_pause;
         int timerColor=p.activeChip() && !p.sharedLimiting?d.appColor(p.app):d.accent;
         PendingIntent open=PendingIntent.getActivity(context,0,new Intent(context,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
@@ -140,6 +161,6 @@ final class TimerNotifications {
         }
         // One replacement on a confirmed return to app use, never a per-tick repost loop.
         if(publication.replace())manager.cancel(10);
-        manager.notify(10,notification);previous=key;
+        manager.notify(10,notification);previous=key;postedSecond=elapsed/1000;
     }
 }

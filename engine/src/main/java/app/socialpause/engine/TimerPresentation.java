@@ -27,12 +27,14 @@ public final class TimerPresentation {
         long sharedRemaining = sharedLimit > 0 ? e.sharedRemaining() : 0;
         if (!e.running || !connected || e.quiet(wall))
             return new TimerPresentation(Kind.HIDDEN, null, 0, 1, List.of(), sharedRemaining, sharedLimit, false);
+        RulesSnapshot snapshot = e.snapshot(wall, elapsed);
+        sharedRemaining = sharedLimit > 0 ? snapshot.sharedRemaining() : 0;
         List<Row> rows = new ArrayList<>();
         for (String pkg : e.selected) {
             long cooldown = e.cooldownRemaining(pkg, wall, elapsed);
             RowState state = e.noAllowance(pkg) ? RowState.NO_ALLOWANCE
                     : cooldown > 0 ? RowState.COOLDOWN : e.used(pkg) > 0 ? RowState.USAGE : RowState.AVAILABLE;
-            rows.add(new Row(pkg, cooldown > 0 ? cooldown : e.remaining(pkg), state,
+            rows.add(new Row(pkg, cooldown > 0 ? cooldown : snapshot.apps().get(pkg).remaining(), state,
                     cooldown > 0 ? RulesEngine.COOLDOWN : e.limit(pkg)));
         }
         var mode = e.mode(wall, elapsed);
@@ -47,8 +49,8 @@ public final class TimerPresentation {
         }
         String app = e.focused();
         if (app != null) {
-            boolean sharedLimiting = sharedLimit > 0 && sharedRemaining <= e.remaining(app);
-            return new TimerPresentation(Kind.APP, app, sharedLimiting ? sharedRemaining : e.remaining(app),
+            boolean sharedLimiting = sharedLimit > 0 && sharedRemaining <= snapshot.apps().get(app).remaining();
+            return new TimerPresentation(Kind.APP, app, sharedLimiting ? sharedRemaining : snapshot.apps().get(app).remaining(),
                     sharedLimiting ? sharedLimit : e.limit(app), rows, sharedRemaining, sharedLimit, sharedLimiting);
         }
         String next = e.nextAvailableApp(wall, elapsed);

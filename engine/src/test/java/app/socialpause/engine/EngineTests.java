@@ -178,6 +178,7 @@ public final class EngineTests {
         V06Tests.run();
         V07Tests.run();
         FocusResolverTests.run();NotificationDismissalTests.run();StartupRecoveryTests.run();
+        OptimizationTests.run();
         System.out.println(tests+" scenarios passed.");
     }
 }
