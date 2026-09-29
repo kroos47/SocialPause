@@ -111,7 +111,7 @@ Use the Home, Insights and Settings bottom tabs. Insights starts empty on a new 
 
 Limit reached screens return to phone Home immediately and show a short explanation, then dismiss after five seconds. Verify they disappear on locking the phone and that reopening a depleted app is still blocked.
 
-## Version 0.7.0 checks
+## Version 0.7.1 checks
 
 Use the project timing suite for this release; `artifacts/design-tests.zip` belongs to the old 0.2 redesign and is obsolete for current timer rules. Current tests include the legacy fixture in `engine/src/test/resources/`.
 
@@ -119,7 +119,7 @@ After building, copy `app/build/outputs/apk/debug/app-debug.apk` to `artifacts/S
 
 Updating from 0.3/0.4/0.5/0.6 preserves timers, history and schedules. An already-running installation receives no retrospective Stop lock; the next Start begins six hours. Stop monitoring before changing Individual / Shared mode or app allowances; the 00:01–00:30 shared slider also requires Shared mode. An active older shared cycle above 30 minutes keeps its existing budget until reset. Verify the theme switch, allowance sliders, Lunch wheels and Save/Cancel, app selection and automatic Stop after Accessibility revocation using `DEVICE_TESTS.md`. Only upgrades from the legacy 0.2 rules reset app allowances once.
 
-For the notification regression, start manual lunch, dismiss its ordinary notification, let lunch and its following cooldown finish, then open a selected app. Its focused expanded timer and eligible live countdown must return. Repeat dismissing the cooldown notification, and repeat in both timer modes. Dismissing an actual focused live countdown deliberately suppresses promotion until the next Start; old ambiguous dismissal records are also retained until that Start. Keep Sleep Time off for this check and verify the Samsung live-notification setting above. An emulator can verify Android notification content and promotion requests, but only the phone can establish that One UI renders the countdown.
+For the notification regression, open a usable selected app, expand the drawer, dismiss SocialPause, then close the drawer over the same app. Its focused expanded timer and live countdown request must return without reopening the app or using Stop/Start. Repeat using Clear all, repeated swipes, clearing from Home before opening the app, and clearing during lunch or cooldown before focused use resumes. Run both Individual and Shared modes. Drawer-open time must still consume usage, with no duplicate notifications or repeated alerts. Upgrading from 0.7.0 automatically clears the old dismissal suppression while preserving remaining allowances, cooldowns, lunch eligibility and the Stop deadline. Keep Sleep Time inactive and verify the Samsung live-notification setting above. An emulator can verify Android notification content and promotion requests, but only the phone can establish that One UI renders the countdown.
 
 Use fake-clock tests for the exact six-hour boundary and delayed callbacks; do not shorten the shipping duration to speed up acceptance. Record what was actually checked in `VALIDATION.md`, with Samsung checks separate from build/emulator results.
 
@@ -131,4 +131,14 @@ Use a disposable Android 16 emulator for the synthetic runtime suite. It replace
 adb -s emulator-5580 shell am instrument -w -e synthetic true app.socialpause.test/app.socialpause.RuntimeChecks
 ```
 
-Replace the emulator serial with your disposable device's serial. This checks actual notification payloads and dismissal callbacks, the controller guard, the Home countdown, automatic Stop-button enablement, and lunch controls. The production six-hour and lunch constants are unchanged; test-only fixtures move deadlines near boundaries. Keep the test APK separate from the personal-install APK.
+Replace the emulator serial with your disposable device's serial. This default phase checks notification payloads and dismissal callbacks, the controller guard, the Home countdown, automatic Stop-button enablement, and lunch controls.
+
+Run the separate drawer phase on a disposable Android 16 AOSP emulator with the built-in Clock app (`com.android.deskclock/.DeskClock`), English system text, and a 1080-pixel-wide display. The gesture coordinates target that display size:
+
+```sh
+adb -s emulator-5580 shell am instrument -w -e synthetic true -e phase drawer app.socialpause.test/app.socialpause.RuntimeChecks
+```
+
+The drawer phase temporarily selects AOSP Clock as a tracked app and keeps the real Accessibility service inspecting windows. In Individual and Shared modes it opens the actual notification drawer, verifies covered/uncovered visibility, checks continued Clock usage or paused Home usage, performs single-notification swipes and Clear all, and checks the returning focused notification, stable Stop deadline and absence of duplicates. Some Android versions retain ongoing notifications in Clear all; a disposable second notification confirms the button was actually used, while individual-swipe cases require a real SocialPause dismissal. This is separate from invoking delete callbacks directly and still does not certify Samsung's visible live pill.
+
+These checks replace emulator state and change its Accessibility setup; never run them on a personal phone. The production six-hour and lunch constants are unchanged; test-only fixtures move deadlines near boundaries. Keep the test APK separate from the personal-install APK. Record the phases actually run and results in `VALIDATION.md`.

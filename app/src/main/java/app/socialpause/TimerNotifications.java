@@ -17,19 +17,28 @@ final class TimerNotifications {
     private final NotificationManager manager;
     private final SharedPreferences visibility;
     private String previous="";
+    private final NotificationDismissalPolicy.State dismissalState;
+    private boolean appVisible;
     TimerNotifications(Context c) {
         context=c;manager=c.getSystemService(NotificationManager.class);
         visibility=c.getSharedPreferences("notification-visibility",Context.MODE_PRIVATE);
+        // 0.7.1 removes session-wide suppression, including ambiguous records from old builds.
+        visibility.edit().remove("ordinary-run").remove("dismissed-cycle").apply();
+        dismissalState=new NotificationDismissalPolicy.State(visibility.getLong("generation",0),visibility.getBoolean("awaiting-return",false));
         NotificationChannel channel=new NotificationChannel("timer","Social timers",NotificationManager.IMPORTANCE_LOW);
         channel.setSound(null,null);channel.enableVibration(false);manager.createNotificationChannel(channel);
     }
-    void newRun(){visibility.edit().remove("ordinary-run").remove("dismissed-cycle").apply();previous="";}
-    void dismissed(long run,boolean liveRequested){
-        // Restoring an ordinary lunch/cooldown/overview must not opt out of later live usage.
-        long previousRun=visibility.getLong("ordinary-run",NotificationDismissalPolicy.NO_RUN);
-        long suppressedRun=new NotificationDismissalPolicy.Dismissal(run,liveRequested).suppressedRunAfter(previousRun,run);
-        if(suppressedRun!=previousRun)visibility.edit().putLong("ordinary-run",suppressedRun).apply();
-        previous="";
+    void newRun(){dismissalState.newRun();persistDismissal();previous="";}
+    void focusVisibility(boolean visible){appVisible=visible;}
+    boolean dismissed(NotificationDismissalPolicy.Dismissal event){
+        if(!dismissalState.dismiss(event))return false;
+        persistDismissal();previous="";return true;
+    }
+    private void persistDismissal(){
+        // Only lifecycle transitions write this small record, never the one-second timer tick.
+        // Persist identity before publishing so a recreated process cannot reuse a callback.
+        visibility.edit().putLong("generation",dismissalState.generation())
+                .putBoolean("awaiting-return",dismissalState.awaitingReturn()).commit();
     }
     private RemoteViews overview(TimerPresentation p, String title, long wall) {
         Design d=new Design(context);RemoteViews view=new RemoteViews(context.getPackageName(),R.layout.notification_overview);
@@ -53,7 +62,7 @@ final class TimerNotifications {
         long wall=AppController.wall(),elapsed=AppController.elapsed();
         TimerPresentation p=TimerPresentation.of(e,connected,wall,elapsed);
         if(p.kind==TimerPresentation.Kind.HIDDEN || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED || !manager.areNotificationsEnabled()) {
-            manager.cancel(10);previous="";return;
+            manager.cancel(10);dismissalState.hidden();appVisible=false;previous="";return;
         }
         boolean awake=context.getSystemService(PowerManager.class).isInteractive();
         Design d=new Design(context);
@@ -86,17 +95,19 @@ final class TimerNotifications {
                 body=rows.toString().stripTrailing();
             }
         }
-        long suppressedRun=visibility.getLong("ordinary-run",NotificationDismissalPolicy.NO_RUN);
-        boolean ordinary=suppressedRun==e.cycleId();
-        boolean liveRequested=NotificationDismissalPolicy.requestsLive(p,e.cycleId(),suppressedRun);
-        String key=e.cycleId()+":"+p.kind+":"+p.app+":"+(awake?p.remaining/1000:p.remaining/60000)+":"+p.rows.stream().map(r->r.app()+":"+r.remaining()/1000+":"+r.cooling()+":"+r.noAllowance()).collect(java.util.stream.Collectors.toList())+":"+body+":"+ordinary+":"+awake+":"+d.dark;
-        if(key.equals(previous))return;previous=key;
+        long oldGeneration=dismissalState.generation();
+        boolean oldPending=dismissalState.awaitingReturn();
+        var publication=dismissalState.prepare(e.cycleId(),p,appVisible);
+        var dismissal=publication.dismissal();
+        boolean liveRequested=dismissal.liveRequested();
+        if(oldGeneration!=dismissalState.generation()||oldPending!=dismissalState.awaitingReturn())persistDismissal();
+        String key=dismissal.identity()+":"+(awake?p.remaining/1000:p.remaining/60000)+":"+body+":"+awake+":"+d.dark;
+        if(key.equals(previous)&&!publication.replace())return;
         int icon=p.kind==TimerPresentation.Kind.APP && !p.sharedLimiting?Design.appIcon(p.app):R.drawable.ic_pause;
         int timerColor=p.activeChip() && !p.sharedLimiting?d.appColor(p.app):d.accent;
         PendingIntent open=PendingIntent.getActivity(context,0,new Intent(context,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-        // Run and original surface belong in immutable identity, never mutable extras. A delayed
-        // lunch dismissal must not be mistaken for the live notification replacing it.
-        var dismissal=new NotificationDismissalPolicy.Dismissal(e.cycleId(),liveRequested);
+        // Every surface lifetime has immutable provenance. Timer ticks reuse its token;
+        // replacement or restoration retires it so delayed callbacks cannot undo recovery.
         PendingIntent dismiss=PendingIntent.getBroadcast(context,10,new Intent(context,NotificationDismissReceiver.class)
                 .setAction(NotificationDismissReceiver.ACTION).setData(Uri.parse(dismissal.identity())),PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder b=new Notification.Builder(context,"timer").setSmallIcon(icon).setContentTitle(title)
@@ -127,6 +138,8 @@ final class TimerNotifications {
             Notification legacy=Notification.Builder.recoverBuilder(context,notification.clone()).setColorized(true).build();
             if(legacy.hasPromotableCharacteristics())notification=legacy;
         }
-        manager.notify(10,notification);
+        // One replacement on a confirmed return to app use, never a per-tick repost loop.
+        if(publication.replace())manager.cancel(10);
+        manager.notify(10,notification);previous=key;
     }
 }

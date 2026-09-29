@@ -3,7 +3,7 @@ package app.socialpause;
 import android.content.*;
 import app.socialpause.engine.NotificationDismissalPolicy;
 
-/** Restore only our ordinary timer surface; never re-promote a dismissed live update in this run. */
+/** A swipe requests restoration on return to app use; stale notification generations are ignored. */
 public final class NotificationDismissReceiver extends BroadcastReceiver {
     static final String ACTION="app.socialpause.NOTIFICATION_DISMISSED";
     @Override public void onReceive(Context c,Intent intent) {
@@ -11,7 +11,7 @@ public final class NotificationDismissReceiver extends BroadcastReceiver {
         var dismissal=NotificationDismissalPolicy.parse(intent.getDataString());
         if(dismissal==null)return;
         AppController controller=AppController.get(c);
-        if(controller.engine.running && dismissal.matches(controller.engine.cycleId()))
-            controller.notificationDismissed(dismissal.run(),dismissal.liveRequested());
+        if(controller.engine.running && dismissal.run()==controller.engine.cycleId())
+            controller.notificationDismissed(dismissal);
     }
 }

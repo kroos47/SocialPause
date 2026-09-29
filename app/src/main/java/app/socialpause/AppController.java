@@ -5,6 +5,7 @@ import android.content.pm.PackageManager;
 import android.os.SystemClock;
 import java.util.*;
 import app.socialpause.engine.RulesEngine;
+import app.socialpause.engine.NotificationDismissalPolicy;
 
 /** Main-thread coordinator shared by the activity, service, and scheduled receiver. */
 public final class AppController {
@@ -33,13 +34,19 @@ public final class AppController {
     public static long wall() { return System.currentTimeMillis(); }
     public static long elapsed() { return SystemClock.elapsedRealtime(); }
     public void refresh() { reconcileMonitoringState(); engine.advance(wall(), elapsed()); publish(); }
-    public void focus(String pkg, boolean unlocked) {
+    public void focus(String pkg, boolean unlocked) { focus(pkg, unlocked, unlocked && pkg != null); }
+    public void focus(String pkg, boolean unlocked, boolean appVisible) {
         reconcileMonitoringState();
+        notifications.focusVisibility(connected && unlocked && appVisible);
         engine.focus(connected ? pkg : null, connected && unlocked, wall(), elapsed()); publish();
     }
-    public void notificationDismissed(long run, boolean liveRequested) {
-        if (!engine.running || run != engine.cycleId()) return;
-        notifications.dismissed(run, liveRequested); refresh();
+    public void notificationDismissed(NotificationDismissalPolicy.Dismissal dismissal) {
+        if (!engine.running || dismissal.run() != engine.cycleId()) return;
+        if(!notifications.dismissed(dismissal))return;
+        // The delete callback can precede the Accessibility panel event. Resample metadata
+        // before using visibility; cached app focus alone must not restore behind the shade.
+        if(monitoringOwner instanceof SocialAccessibilityService service && service.refreshFocusedWindow())return;
+        refresh();
     }
     public void start() {
         requireMonitoring();

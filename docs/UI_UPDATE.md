@@ -1,6 +1,18 @@
 # Version changes
 
+## Version 0.7.1 — live countdown recovery after dismissal
+
+Dismissing SocialPause no longer disables focused live promotion for the monitoring run. When a usable selected app remains beneath the drawer, closing it restores the live countdown request without reopening the app. After dismissal from Home, focused live promotion is requested on entering a usable selected app. Drawer-open time continues consuming the underlying app's allowance.
+
+Focus reporting now distinguishes panel visibility from usage focus. Notification callbacks retain original run, generation and surface information so delayed or duplicate callbacks cannot suppress a replacement. Restoration uses the existing notification ID without duplicate entries, repeated alerts or a cancel/repost loop. App glyphs, expanded focused timers, shared-limit selection, Samsung format eligibility and Sleep Time remain intact.
+
+The update clears obsolete dismissal suppression preferences automatically, without Stop/Start or changes to allowances, cooldowns, history, lunch eligibility or the six-hour Stop lock. This release is **0.7.1, version code 10**, with the existing signing identity. It replaces the 0.7.0 dismissal policy described below; all other 0.7.0 behavior remains.
+
+Actual drawer swipe/Clear all tests complement callback and payload checks. Android/Samsung retain control of final promotion, so record physical Samsung countdown results separately from emulator evidence in `VALIDATION.md`.
+
 ## Version 0.7.0 — lunch notification recovery and six-hour Stop lock
+
+This section records the previous release; its suppression-until-Start policy is replaced by 0.7.1 above.
 
 Start now locks the main Stop button for six continuous elapsed hours. Home explains this before Start and displays “Stop available in HH:MM:SS” while locked. Lunch, cooldowns, Sleep Time and screen-off time count toward the deadline. At the deadline the button enables; monitoring continues until Stop is pressed. The engine/controller rejects early Stop and repeated Start, so the disabled View is not the only enforcement. Lunch controls retain their existing rules and never move this deadline.
 

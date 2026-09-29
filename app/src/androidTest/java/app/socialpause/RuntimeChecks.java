@@ -53,6 +53,9 @@ public final class RuntimeChecks extends Instrumentation {
                 main(()->notifications=(TimerNotifications)field(controller,"notifications"));
                 if(Set.of("usage","cooldown","lunch").contains(phase)) {
                     seed(phase);
+                } else if(phase.equals("drawer")) {
+                    drawerChecks();
+                    main(()->{controller.engine.systemStop(AppController.wall(),AppController.elapsed());controller.refresh();});
                 } else {
                     require(phase.equals("checks")||phase.equals("ui"),"Unknown phase "+phase);
                     // Isolate synthetic app focus from the emulator launcher. Permission remains
@@ -101,7 +104,7 @@ public final class RuntimeChecks extends Instrumentation {
         runSerial+=100;set(e,"cycleSerial",runSerial);return e;
     }
     private void install(RulesEngine e) throws Exception {
-        notificationStep(()->{set(controller,"engine",e);controller.connected=true;notifications.newRun();controller.refresh();});
+        notificationStep(()->{set(controller,"engine",e);set(controller,"startupReconciled",true);controller.connected=true;notifications.newRun();controller.refresh();});
     }
     private void showFocused() throws Exception {
         notificationStep(()->controller.focus(X,true));
@@ -144,22 +147,46 @@ public final class RuntimeChecks extends Instrumentation {
                 dismiss(lunch);showFocused();verifyLivePayload(focused(true),mode==TimerMode.SHARED);
             });
         }
-        check("real focused deleteIntent suppresses only the current monitoring run",()->{
-            RulesEngine e=fresh(TimerMode.INDIVIDUAL,true);install(e);showFocused();Notification live=focused(true);
-            dismiss(live);eventually(()->suppressed()==e.cycleId(),3_000,"Live dismissal did not persist suppression");
-            verifyOrdinaryFocused(focused(false));
-            notificationStep(()->{controller.startManualLunch();set(e,"lunchEnd",AppController.wall()-COOLDOWN);set(e,"lunchCooldownEnd",AppController.wall()-1);controller.refresh();controller.focus(X,true);});
-            verifyOrdinaryFocused(focused(false));
-            notificationStep(()->{controller.engine.systemStop(AppController.wall(),AppController.elapsed());controller.start();controller.focus(X,true);});
-            verifyLivePayload(focused(true),false);
-            dismiss(live);showFocused();verifyLivePayload(focused(true),false);
+        for(TimerMode mode:TimerMode.values())check(mode+": focused dismissal restores on shade closure with original budgets and lock",()->{
+            RulesEngine e=fresh(mode,true);install(e);showFocused();Notification live=focused(true);
+            long run=e.cycleId(),unlock=(long)field(e,"stopUnlockElapsed");
+            notificationStep(()->controller.focus(X,true,false));dismiss(live);
+            verifyOrdinaryFocused(focused(false));long used=e.used(X);
+            notificationStep(()->controller.focus(X,true,false));
+            require(e.used(X)>used,"Shade paused usage");
+            notificationStep(()->controller.focus(X,true,true));Notification restored=focused(true);
+            verifyLivePayload(restored,mode==TimerMode.SHARED);
+            require(!live.deleteIntent.equals(restored.deleteIntent),"Restoration reused dismissed identity");
+            require(e.cycleId()==run&&(long)field(e,"stopUnlockElapsed")==unlock,"Restoration reset run/lock");
+            require(e.used(X)>=used,"Restoration reset usage");
+            dismiss(live);verifyLivePayload(focused(true),mode==TimerMode.SHARED);
+            require(restored.deleteIntent.equals(focused(true).deleteIntent),"Stale dismissal replaced current notification");
+            // Delayed current callback after the drawer already closed: restore immediately once.
+            dismiss(restored);Notification again=focused(true);verifyLivePayload(again,mode==TimerMode.SHARED);
+            require(!again.deleteIntent.equals(restored.deleteIntent),"Repeated dismissal did not restore");
+            dismiss(restored);require(again.deleteIntent.equals(focused(true).deleteIntent),"Duplicate callback changed generation");
+            require(target.getSystemService(NotificationManager.class).getActiveNotifications().length==1,"Duplicate timer notifications");
         });
-        check("existing ordinary-run suppression survives until explicit Start",()->{
-            RulesEngine e=fresh(TimerMode.INDIVIDUAL,true);install(e);
-            target.getSharedPreferences("notification-visibility",Context.MODE_PRIVATE).edit().putLong("ordinary-run",e.cycleId()).commit();
-            showFocused();verifyOrdinaryFocused(focused(false));
-            notificationStep(()->{controller.engine.systemStop(AppController.wall(),AppController.elapsed());controller.start();controller.focus(X,true);});
-            verifyLivePayload(focused(true),false);
+        for(TimerMode mode:TimerMode.values())check(mode+": Home dismissal restores on app entry and stale ordinary callbacks are harmless",()->{
+            RulesEngine e=fresh(mode,true);install(e);
+            Notification home=awaitNotification(n->!n.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER));
+            dismiss(home);awaitNotification(n->!n.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER));
+            showFocused();Notification live=focused(true);verifyLivePayload(live,mode==TimerMode.SHARED);
+            dismiss(home);require(live.deleteIntent.equals(focused(true).deleteIntent),"Stale Home callback replaced live notification");
+        });
+        check("0.7 suppression migration and notification recreation preserve run state",()->{
+            RulesEngine e=fresh(TimerMode.INDIVIDUAL,true);install(e);showFocused();
+            Notification old=focused(true);long run=e.cycleId(),unlock=(long)field(e,"stopUnlockElapsed");
+            target.getSharedPreferences("notification-visibility",Context.MODE_PRIVATE).edit()
+                .putLong("ordinary-run",run).putLong("dismissed-cycle",run).commit();
+            notificationStep(()->{notifications=new TimerNotifications(target);set(controller,"notifications",notifications);controller.focus(X,true);});
+            require(suppressed()==-1&&!target.getSharedPreferences("notification-visibility",Context.MODE_PRIVATE).contains("dismissed-cycle"),"Upgrade did not remove suppression");
+            verifyLivePayload(focused(true),false);dismiss(old);verifyLivePayload(focused(true),false);
+            require(e.cycleId()==run&&(long)field(e,"stopUnlockElapsed")==unlock,"Upgrade modified lock/run");
+            notificationStep(()->controller.focus(X,true,false));dismiss(focused(true));verifyOrdinaryFocused(focused(false));
+            notificationStep(()->{notifications=new TimerNotifications(target);set(controller,"notifications",notifications);controller.focus(X,true,false);});
+            verifyOrdinaryFocused(focused(false));notificationStep(()->controller.focus(X,true,true));verifyLivePayload(focused(true),false);
+            require((long)field(e,"stopUnlockElapsed")==unlock,"Recreation changed lock");
         });
         check("controller rejects early Stop and repeated Start preserves the live run",()->{
             RulesEngine e=fresh(TimerMode.INDIVIDUAL,true);install(e);showFocused();long run=e.cycleId();
@@ -173,7 +200,7 @@ public final class RuntimeChecks extends Instrumentation {
         });
     }
     private void verifyOrdinaryFocused(Notification n) {
-        require(!n.extras.getBoolean("android.requestPromotedOngoing"),"Suppressed live request returned");
+        require(!n.extras.getBoolean("android.requestPromotedOngoing"),"Live recovery must wait while the shade covers the selected app");
         require(n.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER),"Ordinary focused drawer lost countdown");
     }
     private long suppressed() { return target.getSharedPreferences("notification-visibility",Context.MODE_PRIVATE).getLong("ordinary-run",-1); }
@@ -206,6 +233,73 @@ public final class RuntimeChecks extends Instrumentation {
         require(notification.deleteIntent!=null,"Missing deleteIntent");CountDownLatch finished=new CountDownLatch(1);
         notification.deleteIntent.send(target,0,null,(pending,intent,code,data,extras)->finished.countDown(),new Handler(Looper.getMainLooper()));
         require(finished.await(5,TimeUnit.SECONDS),"Dismissal receiver did not complete");waitForIdleSync();
+    }
+
+    /** Real SystemUI gestures, with the Accessibility service polling real windows throughout. */
+    private void drawerChecks() throws Exception {
+        final String clock="com.android.deskclock";
+        shell("cmd statusbar collapse");shell("input keyevent KEYCODE_HOME");
+        main(()->target.getSystemService(NotificationManager.class).cancelAll());
+        for(TimerMode mode:TimerMode.values())for(boolean home:new boolean[]{false,true})for(boolean clearAll:new boolean[]{false,true}) {
+            check(mode+": real "+(clearAll?"Clear all":"swipe")+" from "+(home?"Home":"focused app")+" returns live countdown",()->{
+                RulesEngine e=fresh(mode,false);e.select(Set.of(clock));e.start(AppController.wall(),AppController.elapsed());install(e);
+                shell("am start -W -n com.android.deskclock/.DeskClock");
+                try { eventually(()->onMain(()->clock.equals(e.focused())),8_000,"Clock never became tracked foreground"); }
+                catch(AssertionError failure){main(()->report.append(snapshot()).append("focused=").append(e.focused()).append(" appVisible=").append(field(notifications,"appVisible")).append('\n'));throw failure;}
+                Notification original=focused(true);long run=e.cycleId(),unlock=(long)field(e,"stopUnlockElapsed");
+                if(home){shell("input keyevent KEYCODE_HOME");eventually(()->onMain(()->e.focused()==null),5_000,"Home did not pause usage");
+                    original=awaitNotification(n->!n.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER));}
+                if(clearAll){
+                    String posted=shell("cmd notification post -t Synthetic-clear-all-check socialpause-clear-all-test Disposable-emulator-notification");
+                    eventually(()->shellContains("cmd notification list","socialpause-clear-all-test"),5_000,"Unable to post clear-all fixture: "+posted);
+                }
+                shell("input swipe 540 1 540 1800 400");
+                eventually(()->!notificationAppVisible(),5_000,"Drawer did not report covered visibility");
+                long before=onMainLong(()->e.used(clock));Thread.sleep(1_200);
+                long after=onMainLong(()->e.used(clock));
+                require(home?after==before:after>before,"Drawer usage accounting changed");
+                if(clearAll){
+                    android.view.accessibility.AccessibilityNodeInfo clear=awaitNode("Clear all",false);
+                    android.graphics.Rect bounds=new android.graphics.Rect();clear.getBoundsInScreen(bounds);
+                    shell("input tap "+bounds.centerX()+" "+bounds.centerY());
+                    eventually(()->!shellContains("cmd notification list","socialpause-clear-all-test"),5_000,"Clear all did not clear the disposable notification");
+                    // Android may retain ongoing notifications in Clear all. Either result must
+                    // preserve later promotion; single-swipe scenarios require a real dismissal.
+                } else {
+                    android.view.accessibility.AccessibilityNodeInfo title=awaitNode(home?"Your app timers":(mode==TimerMode.SHARED?"Shared allowance · Clock":"Clock"),true);
+                    android.graphics.Rect bounds=new android.graphics.Rect();title.getBoundsInScreen(bounds);
+                    shell("input swipe 500 "+(bounds.centerY()+30)+" 1060 "+(bounds.centerY()+30)+" 250");
+                    PendingIntent dismissedIdentity=original.deleteIntent;
+                    awaitNotification(n->!dismissedIdentity.equals(n.deleteIntent));
+                    if(!home)verifyOrdinaryFocused(focused(false));
+                }
+                if(!notificationAppVisible())shell("input keyevent KEYCODE_BACK");
+                if(home)shell("am start -W -n com.android.deskclock/.DeskClock");
+                eventually(this::notificationAppVisible,5_000,"App visibility did not return after drawer closure");
+                Notification live=focused(true);
+                require(live.extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN),"Drawer countdown missing after gesture");
+                require(live.extras.getString("android.shortCriticalText","").matches("[0-9]{2}:[0-9]{2}"),"Status timer text missing after gesture");
+                require(live.bigContentView==null&&live.hasPromotableCharacteristics(),"Live template not eligible after gesture");
+                require(e.cycleId()==run&&(long)field(e,"stopUnlockElapsed")==unlock,"Gesture changed run/Stop lock");
+                require(target.getSystemService(NotificationManager.class).getActiveNotifications().length==1,"Duplicate notification after gesture");
+                report.append("  Real window visibility and usage verified; ").append(clearAll?"Clear all":"swipe").append(" completed.\n");
+                shell("input keyevent KEYCODE_HOME");
+            });
+        }
+    }
+    private boolean shellContains(String command,String text){try{return shell(command).contains(text);}catch(IOException failure){throw new IllegalStateException(failure);}}
+    private boolean notificationAppVisible(){return onMain(()->{try{return (boolean)field(notifications,"appVisible");}catch(Exception failure){throw new IllegalStateException(failure);}});}
+    @FunctionalInterface private interface LongCheck { long get(); }
+    private long onMainLong(LongCheck check) throws Exception {long[] value={0};main(()->value[0]=check.get());return value[0];}
+    private android.view.accessibility.AccessibilityNodeInfo awaitNode(String text,boolean exact) throws Exception {
+        android.view.accessibility.AccessibilityNodeInfo[] found={null};
+        eventually(()->{found[0]=findNode(getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).getRootInActiveWindow(),text,exact);return found[0]!=null;},5_000,"Missing drawer control: "+text);
+        return found[0];
+    }
+    private android.view.accessibility.AccessibilityNodeInfo findNode(android.view.accessibility.AccessibilityNodeInfo root,String text,boolean exact){
+        if(root==null)return null;String value=String.valueOf(root.getText()),description=String.valueOf(root.getContentDescription());
+        if(root.isVisibleToUser()&&(exact?value.equals(text):value.equalsIgnoreCase(text)||description.equalsIgnoreCase(text)))return root;
+        for(int i=0;i<root.getChildCount();i++){var found=findNode(root.getChild(i),text,exact);if(found!=null)return found;}return null;
     }
 
     private void uiChecks() throws Exception {

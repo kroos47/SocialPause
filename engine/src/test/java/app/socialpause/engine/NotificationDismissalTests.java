@@ -5,103 +5,102 @@ import static app.socialpause.engine.EngineTests.*;
 import static app.socialpause.engine.RulesEngine.*;
 import static app.socialpause.engine.NotificationDismissalPolicy.*;
 
-/** Exercises notification delivery decisions across real fake-clock lunch and timer transitions. */
+/** Fake-clock regression coverage for dismissal independently of usage/cooldown state. */
 final class NotificationDismissalTests {
     private static Clock setup(TimerMode mode) {
         Clock c=new Clock();c.e=new RulesEngine();c.e.lunchEnabled=false;c.e.sleepEnabled=false;
         c.e.setTimerMode(mode);c.e.start(c.wall,c.elapsed);return c;
     }
-    private static boolean live(Clock c,long suppressedRun) {
-        return requestsLive(c.notification(),c.e.cycleId(),suppressedRun);
-    }
-    private static Dismissal posted(Clock c,long suppressedRun) {
-        return new Dismissal(c.e.cycleId(),live(c,suppressedRun));
-    }
+    private static Publication post(State s,Clock c,boolean visible){return s.prepare(c.e.cycleId(),c.notification(),visible);}
     static void run() {
-        test("manual lunch and cooldown swipes preserve the next focused live countdown in both modes",()->{
-            for(TimerMode mode:TimerMode.values())for(boolean swipe:new boolean[]{false,true}){
-                Clock c=setup(mode);long suppressed=NO_RUN,run=c.e.cycleId();c.focus(X);c.minutes(2);
-                eq(true,live(c,suppressed));c.e.startManualLunch(c.wall,c.elapsed);
-                eq(TimerPresentation.Kind.LUNCH,c.notification().kind);eq(false,live(c,suppressed));
-                if(swipe)suppressed=posted(c,suppressed).suppressedRunAfter(suppressed,run);
+        test("focused swipe restores on drawer closure without restarting usage or the six-hour lock",()->{
+            for(TimerMode mode:TimerMode.values()) {
+                Clock c=setup(mode);State s=new State(0,false);c.focus(X);c.minutes(2);
+                long run=c.e.cycleId(),lock=c.e.stopLockRemaining(c.elapsed),used=c.e.used(X);
+                Dismissal live=post(s,c,true).dismissal();eq(true,live.liveRequested());
+                eq(true,s.dismiss(live));eq(false,s.dismiss(live));
+                Publication covered=post(s,c,false);eq(false,covered.dismissal().liveRequested());eq(false,covered.replace());
+                c.millis(15_000);eq(used+15_000,c.e.used(X));
+                Publication recovered=post(s,c,true);eq(true,recovered.dismissal().liveRequested());eq(true,recovered.replace());
+                eq(lock-15_000,c.e.stopLockRemaining(c.elapsed));eq(run,c.e.cycleId());
+                eq(false,post(s,c,true).replace());eq(recovered.dismissal(),post(s,c,false).dismissal());
+                eq(false,s.dismiss(live));eq(false,s.dismiss(covered.dismissal()));
+                eq(true,s.dismiss(recovered.dismissal()));eq(true,post(s,c,true).replace());
+            }
+        });
+        test("Home dismissal waits for selected app use and never invents a live idle countdown",()->{
+            for(TimerMode mode:TimerMode.values()) {
+                Clock c=setup(mode);State s=new State(0,false);Dismissal idle=post(s,c,true).dismissal();
+                eq(false,idle.liveRequested());eq(true,s.dismiss(idle));
+                Publication overview=post(s,c,true);eq(false,overview.dismissal().liveRequested());eq(false,overview.replace());
+                c.minutes(1);eq(0L,c.e.used(X));c.focus(X);
+                Publication active=post(s,c,true);eq(true,active.dismissal().liveRequested());eq(true,active.replace());
+                eq(false,s.dismiss(idle));eq(false,s.dismiss(overview.dismissal()));
+            }
+        });
+        test("manual lunch through cooldown restores focused promotion with and without ordinary dismissal",()->{
+            for(TimerMode mode:TimerMode.values())for(boolean swipe:new boolean[]{false,true}) {
+                Clock c=setup(mode);State s=new State(0,false);c.focus(X);c.minutes(2);
+                post(s,c,true);c.e.startManualLunch(c.wall,c.elapsed);Dismissal lunch=post(s,c,true).dismissal();
+                eq(false,lunch.liveRequested());if(swipe)eq(true,s.dismiss(lunch));post(s,c,false);
                 c.minutes(60);eq(TimerPresentation.Kind.LUNCH_COOLDOWN,c.notification().kind);
-                eq(COOLDOWN,c.cooldown(X));
-                if(swipe)suppressed=posted(c,suppressed).suppressedRunAfter(suppressed,run);
-                c.minutes(60);eq(Mode.READY,c.mode());c.focus(X);
-                eq(run,c.e.cycleId());eq(0L,c.cooldown(X));eq(APP_LIMIT,c.e.remaining(X));
-                eq(true,live(c,suppressed));eq("10:00",c.notification().shortCriticalText());
-                c.millis(1000);eq("09:59",c.notification().shortCriticalText());
-                eq(mode==TimerMode.SHARED?DEFAULT_SHARED_LIMIT-1000:DEFAULT_SHARED_LIMIT,c.e.sharedRemaining());
+                Dismissal cooldown=post(s,c,true).dismissal();if(swipe)eq(true,s.dismiss(cooldown));post(s,c,false);
+                c.minutes(60);c.focus(X);Publication result=post(s,c,true);
+                eq(true,result.dismissal().liveRequested());eq(swipe,result.replace());eq("10:00",c.notification().shortCriticalText());
+                eq(false,s.dismiss(lunch));eq(false,s.dismiss(cooldown));eq(0L,c.e.used(X));
             }
         });
-        test("early lunch Stop and delayed completion restore live usage after ordinary dismissal",()->{
-            for(TimerMode mode:TimerMode.values()){
-                Clock c=setup(mode);long suppressed=NO_RUN;c.e.startManualLunch(c.wall,c.elapsed);c.minutes(15);
-                c.e.stopLunch(c.wall,c.elapsed);eq(COOLDOWN,c.cooldown(I));
-                suppressed=posted(c,suppressed).suppressedRunAfter(suppressed,c.e.cycleId());
-                c.minutes(65);c.focus(I);eq(true,live(c,suppressed));eq("07:00",c.notification().shortCriticalText());
-                eq(0L,c.e.used(I));
+        test("early lunch Stop and delayed callbacks leave usage and cooldown unchanged",()->{
+            Clock c=setup(TimerMode.INDIVIDUAL);State s=new State(0,false);c.e.startManualLunch(c.wall,c.elapsed);
+            Dismissal lunch=post(s,c,true).dismissal();c.minutes(15);c.e.stopLunch(c.wall,c.elapsed);
+            Dismissal cooldown=post(s,c,true).dismissal();eq(COOLDOWN,c.cooldown(I));eq(false,s.dismiss(lunch));
+            eq(true,s.dismiss(cooldown));c.minutes(65);c.focus(I);eq(true,post(s,c,true).dismissal().liveRequested());
+            eq("07:00",c.notification().shortCriticalText());eq(0L,c.e.used(I));
+        });
+        test("recreation preserves pending return but retires old callback identity",()->{
+            Clock c=setup(TimerMode.INDIVIDUAL);State s=new State(0,false);c.focus(X);c.minutes(2);
+            Dismissal live=post(s,c,true).dismissal();s.dismiss(live);post(s,c,false);
+            c.e=copy(c.e,true);s=new State(s.generation(),s.awaitingReturn());
+            eq(false,s.dismiss(live));c.focus(X);eq(false,post(s,c,false).dismissal().liveRequested());
+            eq(true,post(s,c,true).replace());eq(2*MINUTE,c.e.used(X));
+        });
+        test("old live suppression cannot be encoded in new state and repeated ticks retain generation",()->{
+            Clock c=setup(TimerMode.INDIVIDUAL);c.focus(X);State s=new State(55,false);
+            Dismissal first=post(s,c,true).dismissal();eq(56L,first.generation());eq(true,first.liveRequested());
+            c.millis(500);eq(first,post(s,c,true).dismissal());
+            s.hidden();Dismissal next=post(s,c,true).dismissal();eq(57L,next.generation());eq(false,s.dismiss(first));
+        });
+        test("wrong run generation or original surface cannot affect the current notification",()->{
+            Clock c=setup(TimerMode.INDIVIDUAL);State s=new State(0,false);c.focus(X);Dismissal current=post(s,c,true).dismissal();
+            for(Dismissal wrong:new Dismissal[]{new Dismissal(current.run()+1,current.generation(),true),
+                    new Dismissal(current.run(),current.generation()+1,true),new Dismissal(current.run(),current.generation(),false)})eq(false,s.dismiss(wrong));
+            eq(false,s.awaitingReturn());eq(true,s.dismiss(current));s.newRun();eq(false,s.awaitingReturn());eq(false,s.dismiss(current));
+        });
+        test("canonical v2 dismissal identity rejects legacy malformed and missing provenance",()->{
+            for(long run:new long[]{0,1,Long.MAX_VALUE})for(boolean live:new boolean[]{false,true}) {
+                Dismissal d=new Dismissal(run,42,live);eq(d,parse(d.identity()));
+                eq(false,d.identity().equals(new Dismissal(run,43,live).identity()));
             }
+            for(String bad:new String[]{null,"","socialpause://notification-dismiss/v1/1/live",
+                    "socialpause://notification-dismiss/v2/1/0/live","socialpause://notification-dismiss/v2/-1/1/live",
+                    "socialpause://notification-dismiss/v2/01/1/live","socialpause://notification-dismiss/v2/1/+1/live",
+                    "socialpause://notification-dismiss/v2/1/1/live/","socialpause://notification-dismiss/v2/1/1/unknown",
+                    "socialpause://notification-dismiss/v2/1/9223372036854775808/live"})eq(null,parse(bad));
         });
-        test("delayed ordinary dismissal retains its surface after focused notification replaces it",()->{
-            Clock c=setup(TimerMode.INDIVIDUAL);Dismissal idle=posted(c,NO_RUN);c.e.startManualLunch(c.wall,c.elapsed);
-            Dismissal lunch=posted(c,NO_RUN);c.minutes(60);Dismissal cooldown=posted(c,NO_RUN);c.minutes(60);c.focus(X);
-            Dismissal active=posted(c,NO_RUN);
-            for(Dismissal ordinary:new Dismissal[]{idle,lunch,cooldown}){
-                eq(false,ordinary.liveRequested());eq(false,ordinary.identity().equals(active.identity()));
-                eq(NO_RUN,parse(ordinary.identity()).suppressedRunAfter(NO_RUN,c.e.cycleId()));
-            }
-            eq(true,live(c,NO_RUN));
+        test("pending recovery respects screen locking sleep and lunch",()->{
+            Clock c=setup(TimerMode.INDIVIDUAL);State s=new State(0,false);c.focus(X);s.dismiss(post(s,c,true).dismissal());
+            c.e.focus(X,false,c.wall,c.elapsed);eq(false,post(s,c,false).dismissal().liveRequested());
+            c.minutes(1);eq(APP_LIMIT,c.e.remaining(X));c.focus(X);
+            c.e.sleep(true,600,660);eq(TimerPresentation.Kind.HIDDEN,c.notification().kind);s.hidden();
+            eq(true,s.awaitingReturn());c.e.sleepEnabled=false;eq(true,post(s,c,true).replace());
+            c.e.startManualLunch(c.wall,c.elapsed);eq(false,post(s,c,true).dismissal().liveRequested());
         });
-        test("intentional live dismissal stays suppressed through lunch cooldown and process recreation",()->{
-            for(TimerMode mode:TimerMode.values()){
-                Clock c=setup(mode);c.focus(X);Dismissal actual=posted(c,NO_RUN);
-                long suppressed=actual.suppressedRunAfter(NO_RUN,c.e.cycleId());eq(false,live(c,suppressed));
-                eq(false,posted(c,suppressed).liveRequested());
-                c.e.startManualLunch(c.wall,c.elapsed);c.minutes(60);
-                suppressed=posted(c,suppressed).suppressedRunAfter(suppressed,c.e.cycleId());
-                c.e=copy(c.e,true);c.minutes(60);c.focus(X);eq(false,live(c,suppressed));
-                eq("10:00",c.notification().shortCriticalText()); // The drawer countdown still works.
-            }
-        });
-        test("legacy suppression is retained while a fresh Start can clear it",()->{
-            Clock c=setup(TimerMode.INDIVIDUAL);c.focus(X);long legacy=c.e.cycleId();
-            eq(false,live(c,legacy));c.focus(null);eq(legacy,posted(c,legacy).suppressedRunAfter(legacy,c.e.cycleId()));
-            c.focus(X);eq(false,live(c,legacy));eq(true,live(c,NO_RUN));
-        });
-        test("old-run and future-run dismissal callbacks cannot suppress the current run",()->{
-            Clock c=setup(TimerMode.INDIVIDUAL);c.focus(X);long run=c.e.cycleId();
-            for(long other:new long[]{run-1,run+1})for(boolean liveRequested:new boolean[]{false,true}){
-                Dismissal stale=parse(new Dismissal(other,liveRequested).identity());eq(false,stale.matches(run));
-                eq(NO_RUN,stale.suppressedRunAfter(NO_RUN,run));eq(run,stale.suppressedRunAfter(run,run));
-            }
-            eq(true,live(c,NO_RUN));
-        });
-        test("dismissal identity is canonical distinct by run and surface and rejects missing provenance",()->{
-            for(long run:new long[]{0,1,Long.MAX_VALUE})for(boolean liveRequested:new boolean[]{false,true}){
-                Dismissal original=new Dismissal(run,liveRequested);eq(original,parse(original.identity()));
-                eq(false,original.identity().equals(new Dismissal(run,!liveRequested).identity()));
-            }
-            eq(false,new Dismissal(1,true).identity().equals(new Dismissal(2,true).identity()));
-            for(String malformed:new String[]{null,"","socialpause://notification-dismiss/1",
-                    "socialpause://notification-dismiss/v1/1/unknown","socialpause://notification-dismiss/v1/-1/live",
-                    "socialpause://notification-dismiss/v1/01/live","socialpause://notification-dismiss/v1/+1/live",
-                    "socialpause://notification-dismiss/v1/1/live/","socialpause://notification-dismiss/v1/9223372036854775808/live",
-                    "other://notification-dismiss/v1/1/live"})eq(null,parse(malformed));
-        });
-        test("sleep and screen locking hide live requests without becoming a dismissal",()->{
-            Clock c=setup(TimerMode.INDIVIDUAL);c.focus(X);eq(true,live(c,NO_RUN));
-            c.e.focus(X,false,c.wall,c.elapsed);eq(false,live(c,NO_RUN));c.minutes(1);eq(APP_LIMIT,c.e.remaining(X));
-            c.focus(X);c.e.sleep(true,600,660);eq(TimerPresentation.Kind.HIDDEN,c.notification().kind);eq(false,live(c,NO_RUN));
-            c.e.sleepEnabled=false;eq(true,live(c,NO_RUN));eq("10:00",c.notification().shortCriticalText());
-        });
-        test("shared limiting countdown keeps live eligibility after lunch overview dismissal",()->{
+        test("shared limiting countdown remains correct after ordinary dismissal and shared exhaustion",()->{
             Clock c=new Clock();c.e=new RulesEngine();c.e.lunchEnabled=false;c.e.sleepEnabled=false;
-            c.e.setTimerMode(TimerMode.SHARED);c.e.setSharedLimit(2*MINUTE);c.e.start(c.wall,c.elapsed);
-            c.e.startManualLunch(c.wall,c.elapsed);Dismissal ordinary=posted(c,NO_RUN);c.minutes(120);c.focus(X);
-            long suppressed=ordinary.suppressedRunAfter(NO_RUN,c.e.cycleId());
-            eq(true,live(c,suppressed));eq(true,c.notification().sharedLimiting);eq("02:00",c.notification().shortCriticalText());
-            c.minutes(2);eq(TimerPresentation.Kind.SHARED_COOLDOWN,c.notification().kind);eq(false,live(c,suppressed));
+            c.e.setTimerMode(TimerMode.SHARED);c.e.setSharedLimit(2*MINUTE);c.e.start(c.wall,c.elapsed);State s=new State(0,false);
+            s.dismiss(post(s,c,true).dismissal());c.focus(X);eq(true,post(s,c,true).replace());
+            eq(true,c.notification().sharedLimiting);eq("02:00",c.notification().shortCriticalText());
+            c.minutes(2);eq(TimerPresentation.Kind.SHARED_COOLDOWN,c.notification().kind);eq(false,post(s,c,true).dismissal().liveRequested());
         });
     }
     public static void main(String[] args) {

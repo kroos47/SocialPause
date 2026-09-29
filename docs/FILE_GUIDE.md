@@ -52,9 +52,9 @@ Other Android files:
 |---|---|
 | `app/src/main/java/app/socialpause/Design.java` | Shared light/dark colors, cards, app glyph badges, progress bars, grid/stack chart drawing and accessible day targets. |
 | `app/src/main/java/app/socialpause/BlockOverlay.java` | Brief limit-reached explanation using an Accessibility overlay; returns Home immediately and dismisses after five seconds. |
-| `app/src/main/java/app/socialpause/NotificationDismissReceiver.java` | Handles a dismissal using its original surface/run identity. Ordinary lunch/cooldown/idle dismissals do not suppress live promotion; an active live dismissal suppresses it until the next Start. |
+| `app/src/main/java/app/socialpause/NotificationDismissReceiver.java` | Handles a dismissal using its original surface, run and generation identity; ignores obsolete/duplicate callbacks and permits focused live restoration after drawer closure or app entry. |
 | `engine/src/main/java/app/socialpause/engine/UsageHistory.java` | Local hourly aggregates split at hour/day boundaries. Preserved independently of allowance resets. |
-| `engine/src/main/java/app/socialpause/engine/NotificationDismissalPolicy.java` | Platform-independent dismissal identity and policy: distinguish ordinary surfaces from live countdowns and reject stale monitoring-run callbacks. |
+| `engine/src/main/java/app/socialpause/engine/NotificationDismissalPolicy.java` | Platform-independent dismissal identity and restoration policy: distinguish surfaces and generations, reject stale callbacks, and defer live restoration until selected-app visibility returns. |
 | `engine/src/main/java/app/socialpause/engine/TimerPresentation.java` | Testable notification state: focused app, per-app overview, all cooling, lunch, post-lunch block, or hidden. |
 | `app/src/main/res/values/styles.xml` | Light system-bar and window appearance. |
 | `app/src/main/res/values-night/styles.xml` | Dark system-bar and window appearance. |
@@ -69,20 +69,20 @@ Other Android files:
 | `engine/src/test/java/app/socialpause/engine/EngineTests.java` | Scenario entry point, including real legacy upgrade fixtures and version-specific suites, plus 20,000 transitions checked against independent models. Read the current run output and VALIDATION.md for the observed scenario count. Uses a fake clock and no JUnit dependency. |
 | `engine/src/main/java/app/socialpause/engine/ProcessStartEvidence.java` | Correlates system startup timestamps with this process; avoids treating a reused historical process ID as a new Force stop. |
 | `engine/src/test/java/app/socialpause/engine/StartupRecoveryTests.java` | Tests current, stale, missing and invalid startup evidence. |
-| `app/src/androidTest/java/app/socialpause/RuntimeChecks.java` | Explicitly opted-in, disposable-emulator-only notification/UI checks and synthetic recovery fixtures; excluded from the personal APK. |
+| `app/src/androidTest/java/app/socialpause/RuntimeChecks.java` | Explicitly opted-in, disposable-emulator-only notification/UI checks, a real AOSP Clock/drawer gesture phase and synthetic recovery fixtures; excluded from the personal APK. |
 | `scripts/test-engine.sh` | Compiles/runs the engine tests directly with javac/java when Android tools are unnecessary. |
 | `scripts/verify.sh` | Runs the checked-in wrapper for engine checks, debug APK assembly, and lint using project-local caches/signing state. |
 | `.github/workflows/ci.yml` | GitHub Actions timing-test jobs on Java 17/21, followed by Android APK/lint checks, with downloadable logs and a disposable test APK. |
 | `scripts/package-release.py` | Builds from a clean commit, verifies the original APK signing certificate and version, and packages official local release assets and checksums. |
 | `.github/release-signing.sha256` | Public certificate fingerprint used to reject APKs signed with the wrong key; this is not the private signing key. |
-| `.github/release-notes/v0.7.0.md` | Release text for the lunch-notification fix and six-hour Stop lock. Older versions retain their own notes. |
+| `.github/release-notes/v0.7.1.md` | Release text for focused live-countdown recovery after any notification dismissal. Older versions retain their own notes. |
 
 A focus event flows like this:
 
 ```text
 Android Accessibility event
   → SocialAccessibilityService gathers package/window metadata and lock state
-  → FocusResolver keeps the app through system panels, clearing it on app exit/lock
+  → FocusResolver keeps the app through system panels, reports panel visibility separately, and clears focus on app exit/lock
   → AppController passes time/focus into RulesEngine
   → RulesEngine accounts for the previous focus and decides which apps are blocked
   → AppController saves state, updates notifications, and schedules the next alarm
@@ -146,5 +146,11 @@ Editing a generated APK or compiled class does not change the source. Make chang
 
 - `RulesEngine.java`: elapsed-time Stop lock, separate guarded user/system stop paths, and migration that preserves an old active run without adding a retrospective lock. Allowance/lunch resets cannot change the Stop deadline.
 - `MainActivity.java` and `AppController.java`: display and enforce Stop availability; ordinary recreation preserves state, while reboot, confirmed Force stop and permission removal wait for a new Start.
-- `TimerNotifications.java` and `NotificationDismissReceiver.java`: preserve notification origin so dismissing lunch/cooldown/idle does not suppress the next focused live countdown. Preserve the existing Samsung format and deliberate live-dismissal behavior.
+- `TimerNotifications.java` and `NotificationDismissReceiver.java`: preserve notification origin so dismissing lunch/cooldown/idle does not suppress the next focused live countdown. Preserve the existing Samsung format; the original suppression-until-Start policy is superseded by 0.7.1 below.
 - `V07Tests.java` and `NotificationDismissalTests.java` under the engine test package cover the Stop-lock rules and dismissal policy. The Android device checklist covers restart distinctions and the complete lunch-to-focused-notification sequence. Build results and device observations belong in `VALIDATION.md`.
+
+## Changed in 0.7.1
+
+- `FocusResolver.java`, `SocialAccessibilityService.java` and `AppController.java`: report whether a system panel covers the underlying app separately from usage focus. Drawer closure can restore the live countdown without pausing usage or reopening the app.
+- `NotificationDismissalPolicy.java`, `TimerNotifications.java` and `NotificationDismissReceiver.java`: recover focused live requests after dismissal, validate run/generation/surface provenance, clear old suppression preferences without touching timer state, and keep one notification without a cancel/repost loop.
+- Engine scenarios and `RuntimeChecks.java` cover restoration, stale callbacks, notification payloads and migration. Actual drawer gestures and Samsung live-pill rendering are separate acceptance checks in `DEVICE_TESTS.md`.

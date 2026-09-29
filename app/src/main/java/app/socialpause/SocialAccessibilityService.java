@@ -51,6 +51,12 @@ public final class SocialAccessibilityService extends AccessibilityService {
             inspect(); handler.removeCallbacks(pulse); if (active) handler.postDelayed(pulse, 500);
         }
     }
+    /** Refresh drawer visibility before a dismissal callback decides whether to restore live UI. */
+    boolean refreshFocusedWindow() {
+        if (!active || controller == null) return false;
+        inspect();
+        return true;
+    }
     private void inspect() {
         if (!active || controller == null) return;
         controller.reconcileMonitoring();
@@ -75,8 +81,9 @@ public final class SocialAccessibilityService extends AccessibilityService {
             AccessibilityNodeInfo root=getRootInActiveWindow();
             if(root!=null&&root.getPackageName()!=null)fallback=root.getPackageName().toString();
         }
-        String pkg=focusResolver.resolve(unlocked,controller.engine.running,windows,fallback,recents);
-        controller.focus(pkg, unlocked);
+        FocusResolver.Focus focus=focusResolver.resolveFocus(unlocked,controller.engine.running,windows,fallback,recents);
+        String pkg=focus.app();
+        controller.focus(pkg, unlocked, focus.appVisible());
         if (controller.engine.blocked(pkg, AppController.wall(), AppController.elapsed()) && AppController.elapsed() - lastHome > 700) {
             lastHome = AppController.elapsed();
             focusResolver.reset();
